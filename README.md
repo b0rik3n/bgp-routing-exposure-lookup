@@ -644,6 +644,33 @@ providers have separate retention behavior. The HTTP handler suppresses its
 ordinary request logging, but that does not guarantee the surrounding environment
 logs nothing.
 
+### Query privacy
+
+**Running the interface locally does not make live BGP queries private.** When
+an Observed BGP paths lookup needs an external request, RIPE NCC receives the
+normalized target ASN, IP address, or prefix, the requested observation time
+(for historical queries), and the public source IP of the connection. Capturing
+an investigation or comparing two dates uses this same lookup workflow. HTTPS
+encrypts the connection but does not hide the query from RIPE; a VPN changes the
+source IP visible to RIPE, not the target in the query.
+
+To investigate without sending new target queries, open and replay an existing
+investigation ZIP in the local interface or use the offline replay command.
+Opening/replaying a bundle makes no external requests; following a source link
+is a separate browser request. Saved evidence reflects only its recorded times
+and coverage, not necessarily current routing.
+
+The tool does not yet provide an enforced offline mode for ordinary lookups,
+automatically search saved bundles before querying RIPE, or ingest full routing
+archives for private local target searches. A cache hit may avoid a request,
+but the cache is not a privacy guarantee. If a target must remain confidential,
+do not submit it to the live lookup, capture, or comparison workflow.
+
+Investigation ZIPs and other exports are unencrypted and can disclose your
+targets and findings. Store and share them according to the sensitivity of the
+investigation. Local replay does not change upstream retention of queries that
+were already sent when the evidence was captured.
+
 ### Existing controls
 
 - Loopback binding by default and local Host/Origin validation without a service token.
