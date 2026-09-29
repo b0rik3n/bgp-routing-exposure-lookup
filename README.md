@@ -1,152 +1,763 @@
 # BGP Provider Lookup
 
-Find observed paths and incoming providers for an ASN, IP, or CIDR, or import
-IPv4/IPv6 addresses, CIDRs, and start-end ranges to identify their origin
-ASNs and network organizations. This directory is self-contained and
-can become its own GitHub repository. No Mucaro, Node, database, API key, or Python
-package dependency is required for the standalone tool. Requires Python 3.10+.
+Investigate the network behind an IP address and the networks that provide an
+observed BGP path to an origin autonomous system (AS). Use current or historical
+data, inspect the evidence, and export results for further analysis.
 
-## Run locally
+The tool includes a local browser interface, a command-line interface, and a
+small asynchronous job API. It runs independently of Mucaro using Python's
+standard library. No Python packages, Node.js, database, API key, or GitHub login
+are required to run an extracted copy.
+
+**Status:** local analyst/research tool. The bundled HTTP server is not a
+production-ready public service. This is source code, not a signed desktop
+application or a browser-only application.
+
+**Important:** an observed BGP neighbor is not automatically an ISP or transit
+provider. Relationship classifications are inferences, not proof of commercial
+agreements, physical connectivity, or the route taken by your own traffic.
+
+## Contents
+
+- [Choose a lookup mode](#choose-a-lookup-mode)
+- [Requirements and quick start](#requirements-and-quick-start)
+- [Browser workflow](#browser-workflow)
+- [Import formats](#import-formats)
+- [Interpret the results](#interpret-the-results)
+- [Current and historical data](#current-and-historical-data)
+- [Command-line usage](#command-line-usage)
+- [Exports and result structure](#exports-and-result-structure)
+- [Architecture and processing](#architecture-and-processing)
+- [BGPStream tradeoffs](#relationship-to-bgpstream)
+- [Limits, caching, and performance](#limits-caching-and-performance)
+- [Privacy and security](#privacy-and-security)
+- [Local API](#local-api)
+- [Configuration and hosting](#configuration-and-hosting)
+- [Mucaro integration](#mucaro-integration)
+- [Troubleshooting](#troubleshooting)
+- [Development and project structure](#development-and-project-structure)
+- [Known limitations](#known-limitations)
+- [Data sources and licensing](#data-sources-and-licensing)
+- [Glossary](#glossary)
+
+## Choose a lookup mode
+
+| | Provider Paths | Origin Mapping |
+| --- | --- | --- |
+| Main question | Which networks are observed immediately before the origin AS? | Which AS announces the network containing this IP or range? |
+| Input | ASN, IPv4/IPv6 address, or CIDR | IPv4/IPv6 address, CIDR, or start-end range |
+| Example | `AS63` or `129.55.110.9` | `129.55.110.9` or `129.55.0.0/24` |
+| Primary evidence | RIPE RIS BGP paths | CAIDA RouteViews prefix-to-AS snapshots |
+| Enrichment | CAIDA organization names and inferred AS relationships | CAIDA organization names |
+| Maximum import | 20 entries | 1,000 entries |
+| Historical selection | Routing state at 12:00 UTC on the selected day | Latest available routing snapshot within the selected day |
+
+Choose **Provider Paths** to investigate incoming connectivity, including inferred
+transit providers. Choose **Origin Mapping** for bulk IP/range attribution.
+Neither mode performs traceroute, pings the destination, or determines an end
+user's retail broadband subscription.
+
+## Requirements and quick start
+
+### Requirements
+
+- Python 3.10 or newer, with working HTTPS certificate trust.
+- A modern browser for the graphical interface.
+- Internet access to `stat.ripe.net` and `publicdata.caida.org` for lookups.
+- A writable cache directory; by default, `data/` beside the scripts.
+- Memory for routing indexes. Origin Mapping can use several hundred megabytes.
+
+The local workflow has been verified on macOS. The code has no macOS-only runtime
+dependency, but Windows and Linux workflows have not been validated as part of
+this release. Commands below use a macOS/Linux-style shell.
+
+### 1. Get the code
+
+Extract the supplied ZIP and open a terminal in its `bgp-provider-lookup` folder.
+Alternatively, users with access to the private repository can clone it:
 
 ```sh
+git clone https://github.com/b0rik3n/bgp-provider-lookup.git
+cd bgp-provider-lookup
+```
+
+GitHub authentication is needed to access a private repository, not to run an
+extracted copy of this tool.
+
+### 2. Start the local server
+
+```sh
+python3 --version
 python3 server.py
 ```
 
-Open http://127.0.0.1:8765. Provider Paths is the default view; enter `AS63`
-or an IP/CIDR. Switch to Origin Mapping for bulk daily mappings and range imports.
-Paste input or import CSV, TSV, or TXT. Select Latest or a historical UTC date.
-CSV files can have one named address column:
-`ip`, `ip_address`, `address`, `cidr`, `network`, `prefix`, `range`, `resource`, or `asn`.
-Other CSV columns are ignored. Headerless files accept comma-separated values
-or one value per line. Origin imports allow 1,000 entries; provider paths allow
-20 entries. Both have a 256 KB limit. Provider Paths accepts ASNs, IPs, and CIDRs,
-but requires arbitrary start-end ranges to be converted to CIDRs first.
+Open [http://127.0.0.1:8765](http://127.0.0.1:8765). Keep the terminal running while
+using the tool; stop it with `Ctrl+C` when finished. There is no `pip install`,
+`npm install`, or database setup step. Use an equivalent Python 3.10+ command if
+your system names the interpreter differently.
+
+### 3. Run the example
+
+Provider Paths is selected by default, with `AS63` in the input field. Select
+**Latest**, then **Find provider paths**. Expand a path/prefix summary to inspect
+full AS sequences. The first request can take longer while datasets download.
+
+If port 8765 is occupied, use another port:
 
 ```sh
-python3 lookup.py 129.55.110.9 129.55.0.0/24
-python3 lookup.py --input networks.csv --date 2026-08-01 --format csv
-python3 lookup.py --paths AS63
-python3 lookup.py --paths 129.55.110.9 --date 2026-08-01 --format csv
-python3 -m unittest discover -s . -p 'test_*.py'
+python3 server.py --port 8766
 ```
 
-The first lookup downloads public datasets. Subsequent lookups use the local
-`data/` cache. New dates can take tens of seconds or longer. Current mappings
-mean the latest available daily snapshot, not the real-time routing table.
-The interface displays source dates and exports CSV or JSON with provenance.
-If a selected date is unavailable, that family returns an error; the tool does
-not silently substitute a different date.
+Then open [http://127.0.0.1:8766](http://127.0.0.1:8766). This is also useful when
+the Mucaro preview already has a lookup service running on port 8765.
 
-## Provider paths
+## Browser workflow
 
-RIPE RIS supplies BGP routing state reconstructed from a RIB plus subsequent
-updates. The tool keeps paths terminating at the requested origin AS, collapses
-consecutive AS prepends, and identifies the distinct ASN immediately before
-the origin. AS sets, malformed paths, and paths with loops are excluded with
-a visible count. IP lookups select the longest matching prefix per observation
-peer; CIDR lookups retain overlapping routes. Names come from CAIDA AS Organizations.
+### Provider Paths
 
-The immediate neighbor's relationship to the origin is inferred using CAIDA's
-dated serial-2 AS Relationships dataset: provider, peer, customer, or unknown.
-It is not contractual proof. Missing relationship data leaves the neighbor
-unknown instead of assuming it is an ISP. Neighbor observations, prefixes,
-collector names, and full AS paths can be inspected and exported.
+1. Select **Provider paths**.
+2. Enter an ASN, IP, or CIDR, or choose **Import file**.
+3. Select **Latest** or **Historical** and a UTC date.
+4. Select **Find provider paths**.
+5. Review each origin, its incoming networks, relationship labels, and collector counts.
+6. Expand path/prefix summaries. Hover over an ASN in a sequence for its organization name.
+7. Export CSV or JSON as needed.
 
-Latest uses RIS's latest available observation and displays its timestamp.
-Historical dates query 12:00 UTC. Organization and relationship snapshots are
-chosen on or before that observation date, which does not eliminate inference
-error or dataset lag. RIS coverage is incomplete and vantage-point dependent;
-these are not measurements from the user's network. Counts of distinct
-collector-peer sessions are neither independent network counts nor traffic share.
+ASNs require the case-insensitive `AS` prefix: use `AS63`, not a bare `63`.
+Start-end ranges are not supported in this mode; supply CIDRs instead.
 
-Path requests send the entered public IP, prefix, or ASN to RIPE NCC. They never
-connect to the imported destination. Known private/special-use IPs stay local.
-Responses are memory cached for 5 minutes (latest) or 1 hour (historical), up to
-8 responses. Responses over 12 MB or 50,000 routes return an explicit error.
-Evidence is capped at 1,000 path/prefix combinations per input, divided among
-neighbors, and truncation is disclosed in UI/exports. Counts reflect the returned
-RIS observations even when stored evidence is limited.
+### Origin Mapping
 
-## Origin mapping
+1. Select **Origin mapping**.
+2. Paste IPs, CIDRs, or start-end ranges, or import a file.
+3. Choose a routing date and select **Resolve networks**.
+4. Review prefixes, origin ASNs, organizations, statuses, and source dates.
+5. Use the text filter and status selector to narrow displayed results.
+6. Export the lookup as CSV or JSON.
 
-`IP -> longest matching BGP prefix -> origin ASN(s) -> organization name`
+The **Example** button replaces the current input with examples for the selected
+mode. Switching modes hides previous results. Export results you need before
+replacing them with another lookup.
 
-- An origin organization can be an ISP, cloud provider, university, enterprise,
-  or another organization. BGP origin alone does not prove the retail ISP or
-  upstream transit provider, legal ownership, or physical location.
-- Ranges are split at route boundaries. More-specific routes override covering
-  routes. Multiple origins and ambiguous AS sets are preserved.
-- Missing routes are labeled `not_observed`, not definitively unrouted. CAIDA's
-  daily files derive from a single RouteViews collector per address family.
-- Historical routing uses a snapshot taken during the selected UTC day.
-  Organization names use the newest available organization snapshot on or
-  before that routing date. Both timestamps are visible. Registration data may
-  lag actual organizational changes.
-- Organization country is registration context, not IP geolocation.
-- Default routes are excluded. Known private and special-use inputs are flagged.
-- IPv4 routing availability starts in May 2005; IPv6 starts in January 2007.
-  Organization mapping availability is independent; missing data is an error.
-- Results are limited to 5,000 segments per batch and 20,000 overlapping routes
-  per input. Large ranges return an explicit error instead of truncating silently.
+## Import formats
 
-## Relationship to BGPStream
+Paste text or import `.txt`, `.csv`, or `.tsv` files. The UTF-8 text limit is
+256 KiB (262,144 bytes). Blank lines and lines beginning with `#` after leading
+whitespace are ignored. Invalid entries remain visible as individual errors;
+malformed CSV or an oversized batch can reject the entire import.
 
-Origin Mapping uses CAIDA's precomputed **RouteViews prefix-to-AS daily
-datasets**. Provider Paths uses RIPEstat's BGP State API, based on RIS data.
-Neither runs the libBGPStream runtime. This makes bulk mapping and historical
-daily lookups portable without compiling native C dependencies or downloading
-entire MRT RIB files. The data is derived from BGP routing observations.
+### Plain text
 
-Continuous live streaming or a self-hosted BGP archive would require a
-BGPStream ingestion worker that replays a RIB plus subsequent updates and
-withdrawals. Simply collecting announcements from a time window would produce
-misleading historical state. RIPE RIS currently supplies that reconstructed
-state for the Provider Paths view.
+Provider Paths:
 
-Sources:
+```text
+AS63
+129.55.110.9
+129.55.0.0/24
+```
 
-- https://www.caida.org/catalog/datasets/routeviews-prefix2as/
-- https://www.caida.org/catalog/datasets/as-organizations/
-- https://bgpstream.caida.org/docs
-- https://stat.ripe.net/docs/data-api/api-endpoints/bgp-state
-- https://www.caida.org/catalog/datasets/as-relationships/
+Origin Mapping:
 
-CAIDA's dataset Acceptable Use Agreement applies separately from the code.
-Review the linked dataset terms before redistribution or public/commercial use.
-Do not commit or redistribute downloaded datasets in the GitHub repository.
-Icons are from Lucide; see THIRD_PARTY_NOTICES.md. Choose a license for the
-original code before publishing this as an open-source repository.
+```text
+# One resource per line
+129.55.110.9
+129.55.0.0/24
+129.55.110.1-129.55.110.20
+2606:4700:4700::1111
+```
+
+Headerless comma-separated values also work. One entry per line is easier to
+inspect. Do not mix metadata into headerless input; those cells become resources.
+
+### CSV or TSV with a header
+
+Include exactly one recognized resource column:
+
+`ip`, `ip_address`, `address`, `cidr`, `network`, `prefix`, `range`, `resource`, `asn`.
+
+Header matching ignores case and converts spaces to underscores. Other columns
+are ignored and are not carried into results or exports.
+
+```csv
+label,resource
+Origin investigation,AS63
+Single address,129.55.110.9
+Network investigation,129.55.0.0/24
+```
+
+This example is for Provider Paths. Remove the ASN row for Origin Mapping.
+TSV uses the same rules with tab separators. Files containing both `ip` and
+`cidr` headers are rejected because the resource column would be ambiguous.
+
+### Validation details
+
+- URLs, domain names, and IPv6 zone identifiers are not accepted.
+- CIDRs normalize to network boundaries: `129.55.110.9/24` becomes
+  `129.55.110.0/24`. Origin Mapping records this in its result note.
+- Range endpoints must use the same address family and be in ascending order.
+- Known special-use inputs are identified using the ranges in `lookup.py`.
+  This is not a complete public-address registry or a privacy firewall.
+
+## Interpret the results
+
+### Origin versus provider
+
+The **origin AS** is the final AS in an accepted observed path. Its organization
+may be a university, enterprise, cloud operator, research network, or ISP.
+Identifying the origin does not by itself identify an upstream provider.
+
+The **incoming network** is the distinct AS immediately before the origin after
+consecutive AS prepends are collapsed. The tool classifies this adjacency using
+CAIDA's dated relationship dataset.
+
+For this illustrative path:
+
+```text
+AS24482 -> AS1828 -> AS13789 -> AS63
+```
+
+`AS63` is the origin and `AS13789` is the immediate incoming neighbor. `AS1828`
+and `AS24482` occur farther along the observed path; the tool does not claim they
+are direct providers of AS63. Example paths are not a promise of current routing.
+
+### Relationship labels
+
+| Label | Meaning relative to the origin |
+| --- | --- |
+| Transit provider | CAIDA infers that the neighbor is a provider of the origin. |
+| Peer | CAIDA infers a peer relationship between the neighbor and origin. |
+| Customer | CAIDA infers that the neighbor is a customer of the origin. |
+| Unknown | No usable classification is available; the neighbor is not assumed to be a provider. |
+
+These are inferences, not verified contracts. The tool respects the direction of
+provider/customer relationships. See
+[CAIDA AS Relationships](https://www.caida.org/catalog/datasets/as-relationships/).
+
+### Counts and evidence
+
+- **RIS peers:** distinct collector-peer sessions observing paths through a
+  neighbor, deduplicated across prefixes. Not a count of end users or independent networks.
+- **Collectors:** RIS collection points represented in the observations.
+- **Path/prefix combinations:** distinct normalized AS-path and prefix pairs.
+  The same path observed for two prefixes is two combinations.
+- **Prefixes:** distinct destination prefixes in the group.
+- Expanded paths include their prefix, collector names, and peer count.
+- A direct observation containing only the origin does not invent a provider.
+
+Counts measure visibility in the returned data, not bandwidth, traffic share,
+physical links, provider quality, or confidence. Fewer observations do not
+necessarily mean a provider is less important.
+
+### Status values
+
+| Status | Interpretation |
+| --- | --- |
+| `mapped` | Origin Mapping found unambiguous coverage; Provider Paths processed observed routes. |
+| `multiple_networks` | Different parts of an origin-mapping input map to different origin networks. |
+| `partial` | Some of an origin-mapping input is covered and some is not observed. |
+| `ambiguous` | An origin-mapping result contains multiple origins or an AS set. |
+| `multiple_origins` | A segment has more than one reported origin ASN. |
+| `as_set` | A segment has unordered/ambiguous AS-set origin evidence. |
+| `not_observed` | No matching route was found in the selected data; this does not prove globally unrouted space. |
+| `special_use` | The complete input lies within a recognized special-use range. |
+| `invalid` | The individual resource could not be parsed. |
+| `error` | A lookup failed; this is not evidence that no route exists. |
+
+Provider Paths uses `mapped`, `not_observed`, `special_use`, `invalid`, and `error`.
+Its `mapped` status does not guarantee a known name, a provider classification,
+or even an observed incoming neighbor.
+
+## Current and historical data
+
+| Data | Latest | Historical |
+| --- | --- | --- |
+| Provider paths | Latest state returned by RIPE RIS | Selected day at 12:00 UTC |
+| Origin mapping | Latest available daily snapshot per address family | Latest snapshot within the selected UTC day |
+| Organization names | Newest snapshot on or before the routing observation date | Same rule |
+| Relationship labels | Newest snapshot on or before the routing observation date | Same rule |
+
+"Latest" is not instantaneous or continuously streaming data. Check displayed
+source dates; IPv4 and IPv6 origin results can have different timestamps.
+
+RIPE's BGP State endpoint reconstructs routing state from a preceding RIB and
+subsequent updates. The tool does not approximate history by collecting all
+announcements in a time window. See the
+[RIPE BGP State documentation](https://stat.ripe.net/docs/data-api/api-endpoints/bgp-state).
+
+The date selector accepts May 9, 2005 through today, but availability varies by
+dataset, address family, and resource. Missing exact-day routing data is not
+silently replaced with a different day. Organization and relationship snapshots
+can intentionally be older; their dates are displayed.
+
+If enrichment is unavailable:
+
+- Provider Paths preserves observed paths with warnings, missing names, or
+  unknown relationships as appropriate.
+- Origin Mapping requires a usable dated organization dataset for the address
+  family. Failure is an error. An individual ASN absent from an otherwise usable
+  organization dataset can still be returned without a name.
+
+Run and export separate dated lookups to compare periods. Automatic timelines,
+change reports, and continuous monitoring are not implemented.
+
+## Command-line usage
+
+The CLI runs without the web server. Results go to standard output and progress
+messages to standard error.
+
+```sh
+# Current incoming paths for an origin AS
+python3 lookup.py --paths AS63
+
+# Historical paths for a specific IP
+python3 lookup.py --paths 129.55.110.9 --date 2026-08-01
+
+# Map IPs and CIDRs to origin networks
+python3 lookup.py 129.55.110.9 129.55.0.0/24
+
+# Import and export historical origin mappings
+python3 lookup.py --input networks.csv --date 2026-08-01 --format csv > origins.csv
+
+# Export provider-path evidence
+python3 lookup.py --paths --input resources.txt --format csv > provider-paths.csv
+python3 lookup.py --paths AS63 > provider-paths.json
+
+# Use a separate dataset cache
+python3 lookup.py --paths AS63 --cache ./lookup-cache
+
+# Show command options
+python3 lookup.py --help
+python3 server.py --help
+```
+
+| CLI option | Default | Purpose |
+| --- | --- | --- |
+| Positional resources | None | One or more resources to look up. |
+| `--input PATH` | None | UTF-8 input file; takes precedence over positional resources. |
+| `--paths` | Off | Use Provider Paths instead of Origin Mapping. |
+| `--date YYYY-MM-DD` | `latest` | Historical date; `latest` is also accepted explicitly. |
+| `--format json\|csv` | `json` | Output format. |
+| `--cache PATH` | `data/` beside the script | Downloaded public dataset storage. |
+
+Exit code `1` indicates an invalid/error result or a command-level failure. Other
+statuses, including `not_observed`, can return `0`. Automation should inspect
+result statuses, not treat exit code `0` as proof that a resource was mapped.
+
+## Exports and result structure
+
+**CSV** supports spreadsheets and reporting. Origin exports contain a row for
+each segment/origin combination. Path exports contain retained path/prefix
+evidence for each origin-neighbor pair. Formula-like values are escaped; still
+treat source-derived strings as untrusted data.
+
+**JSON** preserves grouping, warnings, counts, names, statuses, and source metadata.
+Use it when scripts need richer context.
+
+Origin Mapping filters affect the table, not its exports. The table shows at
+most 500 matching segments; exports include the complete result within processing
+limits. Provider-path exports contain retained evidence only, with truncation
+notices when capped. Save needed exports: the server is not a durable archive.
+
+| JSON scope | Important fields |
+| --- | --- |
+| Both modes | `requestedDate`, `generatedAt`, `meaning`, `results`, per-input `status`, optional `error` |
+| Origin Mapping | `segments`, `prefix`, `origins`, `routing`, `organizations`, optional `normalized` and `note` |
+| Provider Paths | `kind: "paths"`, `groups`, `asns`, `warnings`, `observation`, optional `relationships`, `organizations`, `skippedPaths` |
+| Path group | `origin`, `neighbors`, `peerCount`, `collectors`, `prefixes`, `directObservations` |
+| Path neighbor | `asn`, `relationship`, `paths`, `pathCount`, `pathsTruncated`, `peerCount`, `collectors`, `prefixes`, `routeObservations` |
+
+This is an initial integration interface, not a versioned public API. Consumers
+must handle missing optional fields and explicit errors.
+
+## Architecture and processing
+
+```text
+Standalone browser -> Python job API -> lookup engine -> public data sources
+Standalone CLI ----------------------> lookup engine -> public data sources
+
+Mucaro browser -> Next.js proxy -> separate Python job API -> lookup engine
+```
+
+The browser reads files and renders results. Python validates inputs, retrieves
+data, builds routing indexes, groups paths, matches relationships, and prepares
+CSV output. RIPE performs the underlying routing-state query for Provider Paths.
+
+### Provider Paths
+
+1. Validate inputs and skip resources fully within known special-use ranges.
+2. Request routing state from the fixed RIPEstat BGP State endpoint.
+3. For ASN queries, retain paths ending at that ASN, not transit-only matches.
+   For IPs, use the longest matching prefix per observation peer. For CIDRs,
+   retain overlapping prefixes.
+4. Collapse consecutive prepends. Exclude malformed paths, AS sets, and
+   nonconsecutive repeated ASNs indicating loops, with an excluded-path count.
+5. Group by origin and immediate neighbor; deduplicate observation counts.
+6. Add dated CAIDA names and relationship inferences.
+7. Return retained evidence, counts, warnings, and provenance.
+
+### Origin Mapping
+
+1. Select daily CAIDA RouteViews prefix-to-AS files for the required address families.
+2. Load dated organization data.
+3. Apply longest-prefix matching and split ranges at route boundaries, preserving gaps.
+4. Preserve multiple origins and AS sets instead of choosing an arbitrary ASN.
+5. Return segments, names, statuses, and source dates.
+
+### Relationship to BGPStream
+
+This tool **does not run libBGPStream or PyBGPStream**. For its current purpose,
+analyst-directed origin and provider-path investigation, this is primarily an
+architecture tradeoff rather than a major missing capability. It keeps setup
+simple and avoids native BGPStream installation and local full-MRT ingestion.
+It does not, however, make the tool a continuous routing-monitoring service.
+
+The two lookup modes use different routing evidence:
+
+- **Origin Mapping** uses CAIDA's precomputed daily prefix-to-AS files.
+- **Provider Paths** uses RIPEstat's reconstructed BGP state, not those daily
+  prefix-to-AS files. RIPE derives the state from a preceding RIB and subsequent
+  updates. Latest and historical path investigations therefore do not require
+  running BGPStream locally. See the
+  [RIPE BGP State documentation](https://stat.ripe.net/docs/data-api/api-endpoints/bgp-state).
+
+#### When the current approach is appropriate
+
+| Requirement | Current approach |
+| --- | --- |
+| On-demand origin attribution for IPs and ranges | Supported through Origin Mapping, within its dataset and processing limits. |
+| Investigating incoming networks and inferred providers for an origin AS | Supported through Provider Paths, subject to collector visibility. |
+| Historical, point-in-time provider-path investigation | Supported where upstream data is available; currently queries 12:00 UTC on the selected day. |
+| Capturing routing changes throughout a day | Not implemented; isolated point-in-time queries can miss intervening events. |
+| Continuous withdrawal or path-change alerts | Requires streaming, state tracking, and additional detection/alerting logic. |
+| Large-scale work without relying on RIPE's query API | Would benefit from separate ingestion, indexing, and storage infrastructure. |
+| Retaining a durable routing-evidence archive | Requires an explicit persistence, provenance, and retention design. |
+
+The present design depends on upstream query availability, response sizes, and
+data coverage. Provider Paths also sends resource queries to RIPE NCC, as described
+in [Privacy and security](#privacy-and-security). A self-hosted ingestion approach
+could provide greater control over processing and retention, but would introduce
+storage, compute, updates, and operational responsibilities.
+
+#### What BGPStream would and would not add
+
+BGPStream provides access to historical BGP records and live update streams.
+It could support future continuous monitoring or ingestion from additional
+collectors. Installing it alone would not implement correct routing-state
+reconstruction, a persistent archive, incident detection, or alerts. Those remain
+application responsibilities. See the
+[BGPStream overview](https://bgpstream.caida.org/docs) and
+[PyBGPStream tutorials](https://bgpstream.caida.org/docs/tutorials/pybgpstream).
+
+It would not automatically make provider identification more accurate. Additional
+observation sources may improve coverage, but changing the ingestion library does
+not prove commercial relationships or expose every private connection. Data
+visibility and relationship inference remain separate limitations.
+
+#### Recommended direction
+
+Keep the current architecture for on-demand analyst lookups. Consider BGPStream
+when continuous monitoring, additional data sources, query-volume requirements,
+or control over retained evidence justify the extra infrastructure.
+
+A smaller potential enhancement is an **exact historical UTC timestamp selector**
+instead of the fixed 12:00 UTC query. RIPE's BGP State API already accepts a
+timestamp, so that change would not require BGPStream. This is a future option,
+not a currently implemented feature, and point-in-time selection would still not
+capture every event during an interval.
+
+## Limits, caching, and performance
+
+| Resource | Implemented limit/behavior |
+| --- | --- |
+| Import text / HTTP job body | 262,144 bytes / 524,288 bytes including JSON overhead |
+| Provider Paths / Origin Mapping batch | 20 / 1,000 entries |
+| RIS response per resource | 12,000,000 bytes and 50,000 routes |
+| Origin-neighbor combinations | At most 500 per provider-path input |
+| Retained path evidence | At most 1,000 path/prefix combinations per input, divided among neighbors |
+| Origin segments / overlapping routes | 5,000 segments per batch / 20,000 routes per input |
+| Job execution | One worker; up to three outstanding jobs including the running job |
+| Retained jobs | At most 40; expire one hour after creation; restart clears them |
+| Browser polling | About every 1.5 seconds, with a 15-minute UI timeout |
+| RIS response cache | Up to eight responses; latest for five minutes, historical for one hour |
+| In-memory dataset maps | Up to two routing indexes and two organization maps |
+| Catalog cache | One hour |
+| Compressed dataset cache | Approximately 512 MB; oldest files evicted when new downloads need space |
+
+Most limits produce explicit errors. Retained path evidence is capped with a
+notice; its counts still describe all accepted routes in the returned response.
+
+Origin Mapping can require substantial parsing and several hundred MB of memory.
+Caching reduces downloads but does not eliminate parsing after a restart.
+Provider Paths avoids the full prefix-to-AS index but still processes RIS and
+CAIDA enrichment locally. Actual performance depends on input and upstream data.
+
+The cache contains public data, not saved user reports. Catalog files are separate
+from the compressed-file cap; the application does not have a hard 512 MB total
+memory/disk limit. Multiple processes need separate cache directories because
+cross-process cache coordination is not implemented.
+
+## Privacy and security
+
+### External transmission and retention
+
+| Action | Data flow |
+| --- | --- |
+| Provider Paths | Validated, normalized public IP/prefix/ASN queries are sent to RIPE NCC. |
+| Origin Mapping | Imported resources are matched locally; CAIDA receives dataset download requests, not resource queries. |
+| Enrichment | Public dataset download requests go to CAIDA. |
+| Imported destination | No ping, DNS enrichment, web fetch, or connection is made to the submitted destination. |
+| Mucaro integration | Import contents pass through Mucaro to its configured Python service. |
+
+Inputs fully within recognized special-use ranges are handled without external
+resource queries. Do not treat that filter as a guarantee that arbitrary
+sensitive inputs stay local: Provider Paths is an external-query workflow.
+
+Results and input strings live in server memory until expiration or restart.
+Imports/results are not intentionally persisted by the service; user exports
+are saved files. Browser memory, OS swap, gateways, hosting logs, and upstream
+providers have separate retention behavior. The HTTP handler suppresses its
+ordinary request logging, but that does not guarantee the surrounding environment
+logs nothing.
+
+### Existing controls
+
+- Loopback binding by default and local Host/Origin validation without a service token.
+- Fixed external sources, dataset URL validation, and restricted redirects.
+- TLS verification remains enabled.
+- Bounded inputs, downloads, results, and job queue.
+- Random job IDs and separate per-job bearer tokens for result access.
+- Optional server-to-server token, required for non-loopback binding.
+- Basic browser security headers, text-based rendering, and CSV formula escaping.
+
+These are not per-user accounts, workspace isolation, durable auditing, or a
+public-service rate limiter. Anyone able to reach an unprotected local service
+can submit jobs. Keep job tokens and service tokens private; do not put them in
+URLs or client-side code. Treat exported investigation context as potentially sensitive.
+
+## Local API
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /` | Browser interface |
+| `GET /api/health` | Process readiness; does not test upstream data availability |
+| `POST /api/jobs` | Create a lookup job |
+| `GET /api/jobs/{id}` | Read status and the completed result |
+| `GET /api/jobs/{id}/export` | Download CSV after completion |
+
+Create a Provider Paths job:
+
+```sh
+curl --fail-with-body http://127.0.0.1:8765/api/jobs \
+  -H 'Content-Type: application/json' \
+  --data '{"text":"AS63","date":"latest","mode":"paths"}'
+```
+
+HTTP `202` returns an `id` and `token`. Substitute those values below. The
+placeholders are not real credentials; keep the URL quoted when editing it:
+
+```sh
+curl --fail-with-body \
+  -H 'X-Job-Token: <job-token>' \
+  'http://127.0.0.1:8765/api/jobs/<job-id>'
+```
+
+States are `queued`, `running`, `complete`, and `failed`. A completed job contains
+`result`, but individual entries may still have error statuses. Poll sparingly
+instead of creating duplicate jobs.
+
+Use `"mode":"origins"` for Origin Mapping. The API defaults to `origins` when
+mode is omitted, unlike the browser's Provider Paths default. The date defaults
+to `latest`. The health response's `maxInputs: 1000` refers to Origin Mapping;
+Provider Paths is still limited to 20.
+
+With a configured service token, all routes additionally require
+`Authorization: Bearer <service-token>`, including static assets and health checks.
+There is no separate JSON export route; completed job responses contain the result.
+
+Common HTTP responses: `400` malformed input, `401` missing/incorrect configured
+service token, `403` rejected local Host/Origin, `404` unknown/expired job or wrong
+job token, `413` oversized body, `415` non-JSON job request, and `429` full job store.
+
+## Configuration and hosting
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `--host` | `127.0.0.1` | Bind address; keep loopback for local use. |
+| `--port` | `8765` | HTTP port. |
+| `--cache` | `data/` beside the server | Public dataset cache directory. |
+| `BGP_LOOKUP_SERVICE_TOKEN` | Unset | Shared secret; 32+ characters required for non-loopback binding. |
+| `SSL_CERT_FILE` | Python's trust configuration | Optional approved CA bundle. |
+
+The standalone scripts read process environment variables; they do **not** load
+`.env` files automatically. On macOS, the downloader also trusts the system
+`/etc/ssl/cert.pem` bundle when present. Certificate verification remains enabled.
+
+### Before public hosting
+
+Do not expose the bundled standard-library HTTP server directly to the internet.
+Production release work includes:
+
+- Production serving, HTTPS, private networking, and process supervision.
+- End-user authentication/authorization, quotas, and request limits at a trusted gateway.
+- Secret storage and rotation, with tokens kept server-side.
+- Capacity planning, monitoring, timeouts, upstream failures, and cost controls.
+- Restart/persistence policy and a multi-process cache strategy.
+- Provider usage terms, submitted-resource privacy, deployment tests, and rollback.
+
+A service token alone does not make this production-ready. A normal browser does
+not automatically supply it to the protected standalone UI. Serve users through
+an authenticated application/gateway; never expose the token in browser code.
 
 ## Mucaro integration
 
-From the Mucaro root, run `python3 tools/bgp-provider-lookup/server.py` and the
-usual Next.js development server. Open `/network-lookup`. In development,
-Mucaro's API defaults to the loopback lookup service on port 8765. Both interfaces
-use the same web component and Python engine; no separate algorithm is maintained.
+The standalone repository works without Mucaro. Mucaro's Next.js page and API
+proxy live in the Mucaro repository and are not included in this standalone ZIP.
+Committing or pushing this repository does not deploy Mucaro.
 
-The Next.js API forwards only validated import/job requests to an operator-set
-service URL. It never fetches submitted IPs, CIDRs, or arbitrary URLs. Imports
-are rate limited; result requests require a per-job secret token. Existing
-Mucaro APIs and mobile contracts are unchanged.
+For the existing local Mucaro integration, start the service from the Mucaro root:
 
-For a hosted Mucaro deployment, run this service as a separate persistent worker
-behind HTTPS. Set `BGP_LOOKUP_SERVICE_URL` and the same random
-`BGP_LOOKUP_SERVICE_TOKEN` (32+ characters) in both environments. The token stays
-server-side. The standalone server requires a token to bind beyond loopback.
-Serve remote end-user access through Mucaro, not the token-protected raw server.
-The Python standard-library HTTP server is intended for local review; production
-hosting, authentication/access policy, TLS termination, and operations need to
-be finalized before public deployment. Nothing here provisions or deploys it.
+```sh
+python3 tools/bgp-provider-lookup/server.py
+```
 
-Jobs live in memory for up to one hour, require a secret access token, and are
-not persisted. A restart clears them. Origin Mapping never sends uploaded IPs
-to data providers. Provider Paths sends public IP/prefix/ASN queries to RIPE NCC.
-CAIDA receives only public dataset download requests. Requests and inputs are not
-logged. The service runs one lookup at a time, queues at most two more, retains
-at most 40 jobs, and caps compressed dataset cache usage at approximately 512 MB.
-Routing indexes are memory cached, with at most two loaded datasets. Expect
-several hundred MB of RAM. Multiple server processes should use separate caches.
+Start Mucaro's usual development server separately and open
+[http://localhost:3000/network-lookup](http://localhost:3000/network-lookup).
+The development proxy defaults to `http://127.0.0.1:8765`.
 
-On macOS, the downloader also trusts the system `/etc/ssl/cert.pem` bundle.
-TLS verification remains enabled. For other corporate environments, configure
-Python's `SSL_CERT_FILE` with your approved CA bundle.
+The two repositories currently contain copies of the shared browser component
+and Python engine. Changes do not automatically synchronize between them.
+
+| Variable | Where configured |
+| --- | --- |
+| `BGP_LOOKUP_SERVICE_URL` | Mucaro server; points to the separately hosted lookup service. |
+| `BGP_LOOKUP_SERVICE_TOKEN` | Both servers; the same server-to-server secret. |
+
+For a non-local service, Mucaro requires HTTPS and a token of at least 32 characters.
+The Python service does not read `BGP_LOOKUP_SERVICE_URL`. Production has no implicit
+localhost fallback: the page can load without configuration, but lookups fail.
+
+Mucaro's integration adds request limits and forwards only supported job routes.
+It does not require changing existing feed, IOC, AI, database, or mobile API logic.
+Access policy and production hosting still require explicit deployment decisions.
+
+## Troubleshooting
+
+| Symptom | Action |
+| --- | --- |
+| Python missing or syntax/import errors | Check that the selected interpreter is Python 3.10+. |
+| Local page cannot be reached | Keep `server.py` running and use its printed address. Opening `web/index.html` directly is insufficient. |
+| Port already in use | Use `--port 8766` and the matching URL. |
+| First lookup is slow | Downloads/parsing may be running. Watch status and avoid duplicate submissions. |
+| CAIDA/RIS retrieval failure | Check connectivity, approved outbound access, TLS trust, and upstream availability; retry later. |
+| Certificate error | Configure a supported Python trust setup or approved `SSL_CERT_FILE`; do not disable verification. |
+| No historical snapshot | Coverage is incomplete. Choose another date deliberately. |
+| Unknown relationship/name | Check warnings and enrichment dates; missing data does not prove no provider exists. |
+| `not_observed` | Review input, date, address family, and collector coverage; do not assume globally unreachable. |
+| Too many routes/response too large | Use narrower prefixes or smaller imports, not weaker safety limits. |
+| Busy / HTTP `429` | Let work finish; unexpired retained jobs can also fill the store. |
+| Job/export unavailable | It expired, the service restarted, or the token is wrong. Rerun the lookup. |
+| Unauthorized after setting a token | The raw server now needs bearer authentication, including its UI. Use a trusted gateway/client. |
+| Mucaro loads but lookups fail | Start/reconnect the Python service and check its URL/token. Deploying Next.js does not start the Python service. |
+| Private GitHub repo shows 404 | Sign in with repository access or use a supplied ZIP; local execution does not need GitHub access. |
+
+For a corrupt cached dataset, stop the service and move the affected cache file
+aside before retrying. Caches are replaceable downloads, but restarting clears
+in-memory jobs. Do not remove source files or saved analyst exports.
+
+The browser's 15-minute timeout does not cancel a server-side job. There is no
+cancellation endpoint in this version.
+
+## Development and project structure
+
+Run tests from the repository root:
+
+```sh
+python3 -m unittest discover -s . -p 'test_*.py'
+```
+
+The current suite has 35 fixture/mock-based tests, with no live provider requests.
+It covers imports, CIDR normalization, longest-prefix matching, range boundaries,
+multiple origins, dated dataset selection, relationship direction, path
+normalization, observer deduplication, explicit upstream errors, job-token access,
+expiration, and CSV formula escaping.
+
+For behavior changes, add regression fixtures, exercise the browser and CLI,
+check invalid/missing-data cases, and verify export provenance. Inspect desktop
+and mobile layouts for UI changes. Passing tests does not guarantee upstream
+availability or correctness of inferred business relationships. No hosted CI
+workflow is included in this package.
+
+```text
+bgp-provider-lookup/
+  README.md                 Setup and operational guidance
+  THIRD_PARTY_NOTICES.md     Icon attribution and license notices
+  .gitignore                Cache, environment, and metadata exclusions
+  lookup.py                 Imports, datasets, origin lookup, and CLI
+  paths.py                  RIS paths, relationship matching, and export
+  server.py                 Local HTTP server and in-memory job API
+  test_lookup.py            Origin/import/job tests
+  test_paths.py             Provider-path/relationship tests
+  web/
+    index.html              Standalone page
+    app.js                  Shared browser component
+    style.css               Interface styles
+    icons.svg               Icon assets
+  data/                     Runtime cache; not committed or distributed
+```
+
+## Known limitations
+
+- Observations depend on collector visibility; they do not enumerate all
+  providers, private peers, physical links, or Internet routes.
+- AS paths are control-plane evidence, not packet traces from your location.
+  Latency, reachability, bandwidth, and geography are not measured.
+- Names and relationship inferences may lag reality or be incorrect.
+  Organization country is registration context, not IP geolocation.
+- IP/CIDR queries can return multiple origins. CIDR path results retain overlapping
+  evidence, unlike Origin Mapping's disjoint address-range partitions.
+- Provider Paths normalizes prepends and excludes ambiguous/looping paths; it is
+  not a raw MRT archive. Only origin-neighbor relationships are classified.
+- RPKI validation, route-leak/hijack verdicts, WHOIS abuse contacts, traceroute,
+  alerts, and automatic mitigation are not implemented.
+- Exported path evidence may be capped even when counts describe more observations.
+- Jobs and RIS responses are in memory. There is no saved-investigation database,
+  user account system, or cross-device synchronization.
+- Cached files do not constitute a supported fully offline mode.
+- The original code has not yet been assigned an open-source license.
+
+## Data sources and licensing
+
+| Source | Use |
+| --- | --- |
+| [RIPEstat BGP State / RIPE RIS](https://stat.ripe.net/docs/data-api/api-endpoints/bgp-state) | Current/historical observed AS paths. |
+| [CAIDA RouteViews Prefix-to-AS](https://www.caida.org/catalog/datasets/routeviews-prefix2as/) | Daily prefix-to-origin mappings. |
+| [CAIDA AS Organizations](https://www.caida.org/catalog/datasets/as-organizations/) | Dated ASN and organization names. |
+| [CAIDA AS Relationships](https://www.caida.org/catalog/datasets/as-relationships/) | Dated serial-2 provider/customer and peer inferences. |
+| [BGPStream](https://bgpstream.caida.org/docs) | Related ingestion framework, not a runtime dependency. |
+
+Data remains subject to each provider's terms. Review them before redistribution
+or public/commercial hosting. This package does not bundle CAIDA datasets, and
+publishing source code does not grant rights to redistribute third-party data.
+
+Lucide/Feather-derived icon notices are in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). They cover the identified assets,
+not all original application code. Choose an explicit code license before
+presenting this as an open-source project. Keep data-provider terms separate.
+
+## Glossary
+
+| Term | Meaning in this tool |
+| --- | --- |
+| AS / ASN | Autonomous system and its identifier, written as `AS63`. |
+| Origin AS | Final AS in an accepted observed route path. |
+| AS path | Ordered AS sequence, read toward the origin. |
+| Incoming neighbor | Distinct AS immediately before the origin. |
+| CIDR / prefix | Address block such as `129.55.0.0/24`. |
+| Longest-prefix match | Prefer the most specific matching route for an address. |
+| RIB | Routing Information Base, a routing-state baseline. |
+| RIS / RRC | RIPE Routing Information Service and its remote route collectors. |
+| Collector peer | BGP session supplying routes to a collector. |
+| Prepending | Consecutive repetition of an ASN in an advertised path. |
+| MOAS | Multiple origin ASNs reported for a prefix. |
+| AS set | Unordered membership that does not establish a single ordered AS path. |
+| Provenance | Source links and timestamps supporting a result. |
