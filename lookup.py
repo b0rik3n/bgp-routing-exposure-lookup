@@ -200,6 +200,7 @@ class Datasets:
         self.directory.mkdir(parents=True, exist_ok=True)
         self.indexes = OrderedDict()
         self.org_cache = OrderedDict()
+        self.org_hashes = {}
 
     def fetch(self, url: str, max_bytes=50_000_000) -> bytes:
         validate_dataset_url(url)
@@ -291,7 +292,10 @@ class Datasets:
             progress(f"Loading organization names from {name[:8]}")
             organizations, asns = {}, {}
             fields = []
-            with gzip.open(self.cached_file(base + name), "rt", encoding="utf-8") as stream:
+            source_path = self.cached_file(base + name)
+            import hashlib
+            self.org_hashes[name] = hashlib.sha256(source_path.read_bytes()).hexdigest()
+            with gzip.open(source_path, "rt", encoding="utf-8") as stream:
                 for line in stream:
                     if line.startswith("# format:"):
                         fields = line.split(":", 1)[1].strip().split("|")
@@ -311,7 +315,7 @@ class Datasets:
             self.org_cache[name] = resolved
             while len(self.org_cache) > 2:
                 self.org_cache.popitem(last=False)
-        return self.org_cache[name], {"url": base + name, "snapshotDate": datetime.strptime(name[:8], "%Y%m%d").date().isoformat()}
+        return self.org_cache[name], {"url": base + name, "sha256": self.org_hashes.get(name), "snapshotDate": datetime.strptime(name[:8], "%Y%m%d").date().isoformat()}
 
 
 def address(value: int, version: int):

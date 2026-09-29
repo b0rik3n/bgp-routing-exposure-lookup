@@ -28,6 +28,7 @@ agreements, physical connectivity, or the route taken by your own traffic.
 - [Browser workflow](#browser-workflow)
 - [Import formats](#import-formats)
 - [Interpret the results](#interpret-the-results)
+- [Saved investigations and comparisons](#saved-investigations-and-comparisons)
 - [Current and historical data](#current-and-historical-data)
 - [Command-line usage](#command-line-usage)
 - [Exports and result structure](#exports-and-result-structure)
@@ -78,15 +79,14 @@ this release. Commands below use a macOS/Linux-style shell.
 ### 1. Get the code
 
 Extract the supplied ZIP and open a terminal in its `bgp-routing-exposure-lookup` folder.
-Alternatively, users with access to the private repository can clone it:
+Alternatively, clone the public repository:
 
 ```sh
-git clone https://github.com/b0rik3n/bgp-routing-exposure-lookup.git
+git clone https://github.com/bayanilla/bgp-routing-exposure-lookup.git
 cd bgp-routing-exposure-lookup
 ```
 
-GitHub authentication is needed to access a private repository, not to run an
-extracted copy of this tool.
+No GitHub sign-in is needed to clone this public repository or run the tool.
 
 ### 2. Start the local server
 
@@ -287,6 +287,113 @@ Observed BGP paths uses `mapped`, `not_observed`, `special_use`, `invalid`, and 
 Its `mapped` status does not guarantee a known name, a provider classification,
 or even an observed adjacent AS.
 
+## Saved investigations and comparisons
+
+These features apply to **Observed BGP paths**, not Origin Mapping. They support
+repeatable analysis of public observations, not proof of all real-world routing
+dependencies. Independent, time-aligned operator evidence is still required to
+measure accuracy or identify connections missed by public collectors.
+
+### Capture and save an investigation
+
+1. Select **Observed BGP paths** and enter up to 20 ASNs, IPs, or CIDRs.
+2. Choose **Latest**, or **Historical** and a date above the lookup button.
+3. Expand **Save and compare investigations**.
+4. Select **Capture investigation**. This makes a new lookup using those inputs
+   and settings; it does not retroactively capture a previous ordinary lookup.
+5. Review the snapshot, provenance, warnings, and per-input replay checks.
+6. Select **Export investigation ZIP** and keep the file on your computer.
+
+Archives expire with their jobs after one hour and are lost on restart. There
+is a 64 MB retained-archive budget; the oldest archive can be evicted sooner.
+Export promptly. Failed or special-use inputs remain in the bundle with an
+explicit unavailable replay status; they are never reported as verified routes.
+
+### Open and replay without external queries
+
+1. Start the local app normally; Internet access is not needed for saved bundles.
+2. Expand **Save and compare investigations**, select **Open investigation**, and
+   choose an exported ZIP (maximum 32 MB).
+3. The server verifies member sizes and checksums, then reprocesses the saved
+   evidence locally. No source URL in the imported file is fetched.
+4. Select **Inspect snapshot** to browse either saved snapshot. JSON export is
+   available for that snapshot. Export the ZIP to retain the original evidence.
+5. Select **Replay saved evidence** to repeat the check using the installed code.
+
+For an offline command-line inspection/replay:
+
+```sh
+python3 investigations.py routing-investigation.zip > replay-report.json
+```
+
+Exit 0 means the bundle was inspected without a replay mismatch; some inputs
+may still be unavailable. Exit 1 indicates a replay mismatch; exit 2 indicates
+an invalid bundle or read failure. Always inspect per-input statuses.
+
+A match verifies route filtering, prepend normalization, exclusions, grouping,
+and application of **saved enrichment values**. It does not independently
+repeat CAIDA dataset parsing or authenticate upstream evidence. The interface
+shows capture and replay code fingerprints; old bundles may differ under newer
+processing code. Mismatched saved result tables are hidden, and comparison is
+unavailable for that input. Original evidence remains in the ZIP.
+
+### Compare two dates
+
+1. Enter the same target inputs used for the investigation.
+2. In **Save and compare investigations**, choose **Earlier date** and
+   **Later date**. Both use observations at 12:00 UTC; the later date must follow
+   the earlier date and must not be in the future.
+3. Select **Compare dates** and wait for both snapshots.
+4. Expand **All observations**, **Common reporting peers**, and
+   **Relationship inferences** for each input.
+5. Inspect either snapshot, export the comparison JSON, and export the ZIP
+   containing both snapshots, their raw evidence, and the saved comparison.
+
+Changes are keyed by origin AS, immediate adjacent AS, and prefix. The labels
+are **Newly observed adjacency**, **Previously observed adjacency not seen**,
+**Observed path changed**, **Observation coverage changed**, and
+**Relationship inference changed**. Source dates, excluded paths, and missing
+enrichment warnings remain visible. A failed lookup is unavailable, not a
+route disappearance. Direct-origin observations are counted separately and
+never assigned an invented adjacent network.
+
+Common peers are collector-peer sources reporting selected target routes at
+both times, not all active RIS sessions. Restricting to them can hide losses;
+it is a sensitivity check alongside the full comparison, not a bias correction
+or independent validation. Counts are not traffic shares or confidence scores.
+Two snapshots cannot establish the exact change time, intermediate events,
+physical connection additions/removals, or an attack path.
+
+### Bundle format and limits
+
+Version 1 contains exactly `manifest.json`, `investigation.json`, and
+`SUMMARY.txt`. The manifest hashes the latter two with SHA-256 and records their
+byte lengths. Checksums detect accidental corruption, not malicious fabrication
+or source authenticity. Imports do not extract files, execute code, or follow
+URLs, and reject unknown/duplicate members and unsupported versions.
+
+`investigation.json` records input values, requested and observed times,
+generation time, Python version, Git revision and dirty state where available,
+processing source fingerprints, processing limits, results, warnings,
+comparison output, and evidence. Each `risBase64` field encodes the exact RIPE
+response body received (including its JSON envelope), retained even for cached
+responses. Replay uses the observation time rather than treating capture time
+as live routing time. Comparisons use all selected raw routes, not the capped
+path list shown in the ordinary results table.
+
+CAIDA compressed source files are identified by URL, snapshot date, and SHA-256.
+The bundle includes only the result-relevant organization names and relationship
+classifications needed for processing replay; **full CAIDA source datasets are
+not included**. Reproducing their original parsing requires separately obtaining
+the matching datasets and code. Review source terms before sharing any evidence
+bundle, including derived enrichment. Queries, observer addresses, and analysis
+results are included in exported files.
+
+Limits: 16 MB encoded evidence per snapshot, 32 MB compressed ZIP, 48 MB total
+uncompressed members, one or two snapshots, and 20 inputs. Oversized captures
+fail explicitly; narrow the query instead of interpreting partial evidence.
+The ZIP is a local saved investigation, not a managed archive or backup service.
+
 ## Current and historical data
 
 | Data | Latest | Historical |
@@ -317,10 +424,9 @@ If enrichment is unavailable:
   family. Failure is an error. An individual ASN absent from an otherwise usable
   organization dataset can still be returned without a name.
 
-Run and export separate dated lookups to compare periods. Automatic timelines,
-change reports, and continuous monitoring are not implemented. Tracking "how
-does this change over time?" is a future monitoring capability; today, compare
-separately exported dated lookups manually.
+Use **Save and compare investigations** for an evidence-backed two-date
+comparison. Continuous monitoring, automatic timelines, and alerts are not
+implemented; changes between observation times can remain invisible.
 
 ## Command-line usage
 
@@ -450,7 +556,7 @@ The two lookup modes use different routing evidence:
 | Capturing routing changes throughout a day | Not implemented; isolated point-in-time queries can miss intervening events. |
 | Continuous withdrawal or path-change alerts | Requires streaming, state tracking, and additional detection/alerting logic. |
 | Large-scale work without relying on RIPE's query API | Would benefit from separate ingestion, indexing, and storage infrastructure. |
-| Retaining a durable routing-evidence archive | Requires an explicit persistence, provenance, and retention design. |
+| Saving a portable investigation | Supported through bounded ZIP export and offline replay; long-term storage and backups are user-managed. |
 
 The present design depends on upstream query availability, response sizes, and
 data coverage. Observed BGP paths also sends resource queries to RIPE NCC, as described
@@ -593,6 +699,14 @@ With a configured service token, all routes additionally require
 `Authorization: Bearer <service-token>`, including static assets and health checks.
 There is no separate JSON export route; completed job responses contain the result.
 
+Investigation jobs use `mode: "investigation"` with `text`, `date`, and an
+optional later historical `comparisonDate`. Download `/api/jobs/{id}/bundle`
+with `X-Job-Token`. POST an `application/zip` body to
+`/api/investigations/open` or `/api/investigations/replay` to inspect and reprocess
+it without upstream requests. These endpoints retain existing Host/Origin and
+configured service-token checks. Invalid ZIPs return 400; oversized uploads 413.
+The ordinary JSON job response omits raw evidence and binary archives.
+
 Common HTTP responses: `400` malformed input, `401` missing/incorrect configured
 service token, `403` rejected local Host/Origin, `404` unknown/expired job or wrong
 job token, `413` oversized body, `415` non-JSON job request, and `429` full job store.
@@ -673,7 +787,7 @@ Run tests from the repository root:
 python3 -m unittest discover -s . -p 'test_*.py'
 ```
 
-The current suite has 35 fixture/mock-based tests, with no live provider requests.
+The test suite includes fixture/mock-based processing and local HTTP tests, with no live provider requests.
 It covers imports, CIDR normalization, longest-prefix matching, range boundaries,
 multiple origins, dated dataset selection, relationship direction, path
 normalization, observer deduplication, explicit upstream errors, job-token access,
@@ -693,6 +807,9 @@ bgp-routing-exposure-lookup/
   lookup.py                 Imports, datasets, origin lookup, and CLI
   paths.py                  RIS paths, relationship matching, and export
   server.py                 Local HTTP server and in-memory job API
+  investigations.py         Evidence bundles, offline replay, and two-date comparisons
+  test_investigations.py     Replay, bundle integrity, and comparison tests
+  test_investigation_http.py Bundle API and access-control tests
   test_lookup.py            Origin/import/job tests
   test_paths.py             Observed-path/relationship tests
   web/
@@ -718,7 +835,7 @@ bgp-routing-exposure-lookup/
 - RPKI validation, route-leak/hijack verdicts, WHOIS abuse contacts, traceroute,
   alerts, and automatic mitigation are not implemented.
 - Exported path evidence may be capped even when counts describe more observations.
-- Jobs and RIS responses are in memory. There is no saved-investigation database,
+- Jobs and live RIS response caches are in memory; exported ZIPs preserve investigations. There is no saved-investigation database,
   user account system, or cross-device synchronization.
 - Cached files do not constitute a supported fully offline mode.
 - The original code has not yet been assigned an open-source license.

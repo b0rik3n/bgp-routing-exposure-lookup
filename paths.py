@@ -5,6 +5,7 @@ import bz2
 import csv
 from datetime import date, datetime, timezone
 import io
+import hashlib
 import ipaddress
 import json
 import re
@@ -163,6 +164,7 @@ class PathLookup:
     def __init__(self, datasets):
         self.datasets = datasets
         self.cache = OrderedDict()
+        self.raw_response = None
 
     def ris(self, item, requested):
         params = {"resource": item["resource"]}
@@ -171,6 +173,7 @@ class PathLookup:
         url = "https://stat.ripe.net/data/bgp-state/data.json?" + urlencode(params)
         cached = self.cache.get(url)
         if cached and time.time() - cached[0] < (300 if requested == "latest" else 3600):
+            self.raw_response = cached[2]
             return cached[1], url
         try:
             req = Request(url, headers={"User-Agent": "BGPRoutingExposureLookup/0.2", "Accept": "application/json"})
@@ -187,7 +190,8 @@ class PathLookup:
             observed = datetime.fromisoformat(state["timestamp"].replace("Z", "+00:00"))
             if requested != "latest" and observed.date().isoformat() != requested:
                 raise LookupError("RIS returned a different observation date; this result was not used.")
-            self.cache[url] = (time.time(), state)
+            self.raw_response = raw
+            self.cache[url] = (time.time(), state, raw)
             self.cache.move_to_end(url)
             while len(self.cache) > 8:
                 self.cache.popitem(last=False)
@@ -204,11 +208,12 @@ class PathLookup:
         if not candidates:
             raise LookupError("No relationship snapshot is available on or before this date.")
         name = candidates[-1]
-        with bz2.open(self.datasets.cached_file(base + name), "rt") as stream:
+        source_path = self.datasets.cached_file(base + name)
+        with bz2.open(source_path, "rt") as stream:
             relationships = parse_relationships(stream, origins)
-        return relationships, {"url": base + name, "snapshotDate": datetime.strptime(name[:8], "%Y%m%d").date().isoformat()}
+        return relationships, {"url": base + name, "sha256": hashlib.sha256(source_path.read_bytes()).hexdigest(), "snapshotDate": datetime.strptime(name[:8], "%Y%m%d").date().isoformat()}
 
-    def lookup(self, text, requested, progress=lambda _: None):
+    def lookup(self, text, requested, progress=lambda _: None, capture=None):
         items = parse_import(text, parse_path_resource, MAX_PATH_INPUTS)
         if requested != "latest":
             try:
@@ -220,41 +225,47 @@ class PathLookup:
         for i, item in enumerate(items):
             result = {"input": item["input"], "groups": [], "asns": {}, "warnings": []}
             results.append(result)
-            if "error" in item:
-                result.update(status="invalid", error=item["error"])
-                continue
-            if "asn" not in item and is_special(item):
-                result.update(status="special_use", error="Private or special-use address space has no public observed BGP path lookup.")
-                continue
+            self.raw_response = None
+            url, relationships = None, {}
             try:
-                progress(f"Reading RIS paths for {item['resource']} ({i + 1}/{len(items)})")
-                state, url = self.ris(item, requested)
-                routes, skipped = select_routes(state, item)
-                result["observation"] = {"url": url, "observedAt": state["timestamp"], "source": "RIPE RIS"}
-                result["skippedPaths"] = skipped
-                if skipped:
-                    result["warnings"].append(f"{skipped} malformed, looping, or ambiguous AS paths were excluded.")
-                if not routes:
-                    result.update(status="not_observed")
+                if "error" in item:
+                    result.update(status="invalid", error=item["error"])
                     continue
-                observed_date = state["timestamp"][:10]
-                progress("Resolving network names and inferred relationships")
+                if "asn" not in item and is_special(item):
+                    result.update(status="special_use", error="Private or special-use address space has no public observed BGP path lookup.")
+                    continue
                 try:
-                    organizations, provenance = self.datasets.organizations(observed_date, progress)
-                    result["organizations"] = provenance
-                except (LookupError, OSError, EOFError, ValueError):
-                    organizations = {}
-                    result["warnings"].append("Organization names are unavailable; ASNs are shown.")
-                try:
-                    relationships, provenance = self.relationships(observed_date, {row["path"][-1] for row in routes})
-                    result["relationships"] = provenance
-                except (LookupError, OSError, EOFError, ValueError):
-                    relationships = {}
-                    result["warnings"].append("Relationship data is unavailable; neighbors are not classified as transit providers.")
-                result["groups"], result["asns"] = summarize_routes(routes, organizations, relationships)
-                result["status"] = "mapped"
-            except LookupError as exc:
-                result.update(status="error", error=str(exc))
+                    progress(f"Reading RIS paths for {item['resource']} ({i + 1}/{len(items)})")
+                    state, url = self.ris(item, requested)
+                    routes, skipped = select_routes(state, item)
+                    result["observation"] = {"url": url, "observedAt": state["timestamp"], "source": "RIPE RIS"}
+                    result["skippedPaths"] = skipped
+                    if skipped:
+                        result["warnings"].append(f"{skipped} malformed, looping, or ambiguous AS paths were excluded.")
+                    if not routes:
+                        result.update(status="not_observed")
+                        continue
+                    observed_date = state["timestamp"][:10]
+                    progress("Resolving network names and inferred relationships")
+                    try:
+                        organizations, provenance = self.datasets.organizations(observed_date, progress)
+                        result["organizations"] = provenance
+                    except (LookupError, OSError, EOFError, ValueError):
+                        organizations = {}
+                        result["warnings"].append("Organization names are unavailable; ASNs are shown.")
+                    try:
+                        relationships, provenance = self.relationships(observed_date, {row["path"][-1] for row in routes})
+                        result["relationships"] = provenance
+                    except (LookupError, OSError, EOFError, ValueError):
+                        relationships = {}
+                        result["warnings"].append("Relationship data is unavailable; neighbors are not classified as transit providers.")
+                    result["groups"], result["asns"] = summarize_routes(routes, organizations, relationships)
+                    result["status"] = "mapped"
+                except LookupError as exc:
+                    result.update(status="error", error=str(exc))
+            finally:
+                if capture is not None:
+                    capture.add(item, self.raw_response, url, result, relationships)
         return {"kind": "paths", "requestedDate": requested, "generatedAt": datetime.now(timezone.utc).isoformat(),
                 "meaning": "Observed adjacent ASes and separately inferred relationships. Potential ingress is an interpretation, not confirmation of traffic flow, a reachable entry point, a security perimeter, or a vulnerability; paths are not a measurement from your network.", "results": results}
 

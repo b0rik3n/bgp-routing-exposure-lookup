@@ -11,6 +11,13 @@
         <form><section class="entry"><div><div class="entry-head"><label for="resources">IP addresses &amp; networks</label><div class="row"><button type="button" id="example" title="Load example addresses">Example</button><button type="button" id="import">${icon("upload")}Import file</button><input id="file" type="file" accept=".csv,.txt,.tsv,text/plain,text/csv" hidden></div></div>
         <textarea id="resources" spellcheck="false" placeholder="129.55.110.9&#10;129.55.0.0/24" aria-label="IP addresses, CIDRs, or start-end ranges"></textarea><p class="privacy" id="filename">CSV, TSV, or TXT · Up to 1,000 entries</p></div>
         <div class="configuration"><fieldset><legend>Routing date</legend><div class="mode"><label><input name="mode" type="radio" value="latest" checked><span>Latest</span></label><label><input name="mode" type="radio" value="historical"><span>Historical</span></label></div><div class="date-wrap" hidden><label for="date">Snapshot date (UTC)</label><input id="date" type="date" min="2005-05-09"></div></fieldset><button class="primary" id="resolve" type="submit">${icon("search")}Resolve networks</button><p class="privacy">Inputs stay on the lookup server. No connections are made to imported IPs.</p></div></section></form>
+        <details id="investigation-tools" class="investigation-tools"><summary>Save and compare investigations</summary>
+          <p class="muted">Capture observed BGP paths with their evidence, or open a saved ZIP without external queries. Up to 20 inputs; origin mapping is not included.</p>
+          <div class="toolbar"><button type="button" id="capture">Capture investigation</button><button type="button" id="open-investigation">Open investigation</button><input id="investigation-file" type="file" accept=".zip,application/zip" hidden></div>
+          <p class="small muted">Capture uses the inputs and routing date above. Export the ZIP after capture to keep it beyond this session.</p>
+          <div class="comparison-dates"><label>Earlier date (12:00 UTC)<input id="compare-before" type="date" min="2005-05-09"></label><label>Later date (12:00 UTC)<input id="compare-after" type="date" min="2005-05-09"></label><button type="button" id="compare-dates">Compare dates</button></div>
+        </details>
+        <section id="investigation-results" hidden aria-label="Saved investigation"><div class="result-head"><h2>Investigation</h2><div class="toolbar"><button id="bundle-export" type="button">Export investigation ZIP</button><button id="replay-investigation" type="button">Replay saved evidence</button><button id="comparison-export" type="button">Export comparison JSON</button></div></div><div id="investigation-content"></div><label>Inspect snapshot <select id="snapshot-select"></select></label></section>
         <div class="notice" id="notice"></div>
         <div id="status" class="status" role="status" aria-live="polite">Ready</div>
         <section id="results" hidden><div class="summary"><div class="metric"><strong id="total">0</strong><span>Imported</span></div><div class="metric mapped"><strong id="mapped">0</strong><span>Mapped</span></div><div class="metric review"><strong id="review">0</strong><span>Review</span></div><div class="metric"><strong id="unmapped">0</strong><span>Unmapped</span></div></div>
@@ -22,6 +29,16 @@
       const today = new Date().toISOString().slice(0,10);
       this.el("date").max = today;
       this.el("date").value = today;
+      ["compare-before", "compare-after"].forEach(id=>this.el(id).max=today);
+      this.el("compare-after").value=today;
+      this.el("capture").onclick=()=>this.lookup("investigation");
+      this.el("compare-dates").onclick=()=>this.lookup("comparison");
+      this.el("open-investigation").onclick=()=>this.el("investigation-file").click();
+      this.el("investigation-file").onchange=()=>this.openInvestigation();
+      this.el("bundle-export").onclick=()=>this.exportBundle();
+      this.el("replay-investigation").onclick=()=>this.replayInvestigation();
+      this.el("comparison-export").onclick=()=>this.download(JSON.stringify({createdAt:this.investigation.createdAt,tool:this.investigation.tool,coverageMeaning:this.investigation.coverageMeaning,comparison:this.investigation.comparison},null,2),"application/json","routing-comparison.json");
+      this.el("snapshot-select").onchange=()=>this.showSnapshot();
       this.el("paths-tab").onclick=()=>this.setView("paths");
       this.el("origins-tab").onclick=()=>this.setView("origins");
       ["paths-tab","origins-tab"].forEach(id=>this.el(id).onkeydown=(event)=>{
@@ -55,6 +72,9 @@
     el(id) { return this.root.getElementById(id); }
     setView(view) {
       this.view=view;
+      this.el("investigation-tools").hidden=view!=="paths";
+      this.el("investigation-results").hidden=true;
+      this.investigation=null;this.bundleBlob=null;this.job=null;this.payload=null;
       const paths=view==="paths";
       ["paths","origins"].forEach(name=>{this.el(`${name}-tab`).setAttribute("aria-selected",String(name===view));this.el(`${name}-tab`).tabIndex=name===view?0:-1;});
       this.el("results").hidden=true;this.el("path-results").hidden=true;this.el("empty").hidden=false;
@@ -76,11 +96,14 @@
       if (!response.ok) throw new Error(payload.error || "Lookup service is unavailable.");
       return payload;
     }
-    async lookup() {
+    async lookup(researchMode=null) {
       this.controller?.abort();
       clearTimeout(this.timer);
       this.controller = new AbortController();
       this.payload = null;
+      this.investigation=null;this.bundleBlob=null;
+      this.el("investigation-results").hidden=true;
+      this.el("path-csv").hidden=false;
       this.el("results").hidden = true;
       this.el("path-results").hidden = true;
       this.el("empty").hidden = false;
@@ -89,14 +112,19 @@
       this.setBusy(true);
       this.status("Preparing lookup",false,true);
       try {
-        const date = this.root.querySelector('[name="mode"]:checked').value === "latest" ? "latest" : this.el("date").value;
-        this.job = await this.request("/jobs", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({text,date,mode:this.view})});
+        let date = this.root.querySelector('[name="mode"]:checked').value === "latest" ? "latest" : this.el("date").value;
+        let comparisonDate;
+        if(researchMode==="comparison") {
+          date=this.el("compare-before").value;comparisonDate=this.el("compare-after").value;
+          if(!date||!comparisonDate||date>=comparisonDate) throw new Error("Choose an earlier and a later historical date.");
+        }
+        this.job = await this.request("/jobs", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({text,date,mode:researchMode?"investigation":this.view,comparisonDate})});
         this.started = Date.now();
         await this.poll();
       } catch(error) { this.status(error.message, true); this.setBusy(false); }
     }
     setBusy(busy) {
-      ["resolve","import","example","resources","date","paths-tab","origins-tab"].forEach(id=>this.el(id).disabled=busy);
+      ["resolve","import","example","resources","date","paths-tab","origins-tab","capture","compare-dates","compare-before","compare-after","open-investigation","replay-investigation","bundle-export","comparison-export","snapshot-select"].forEach(id=>this.el(id).disabled=busy);
       this.root.querySelectorAll('[name="mode"]').forEach(input=>input.disabled=busy);
     }
     async poll() {
@@ -104,6 +132,10 @@
         const job = await this.request(`/jobs/${this.job.id}`, {headers:{"X-Job-Token":this.job.token}});
         if (job.state === "failed") throw new Error(job.message);
         if (job.state === "complete") {
+          if(job.result.kind==="investigation") {
+            this.investigation=job.result;this.renderInvestigation();
+            this.status("Investigation captured. Export the ZIP to retain its evidence.");this.setBusy(false);return;
+          }
           this.payload=job.result;
           if(this.payload.kind==="paths") this.renderPaths(); else this.render();
           this.status("Lookup complete");
@@ -114,6 +146,84 @@
         this.status(job.message,false,true);
         this.timer=setTimeout(() => this.poll(),1500);
       } catch(error) { this.status(error.message,true); this.setBusy(false); }
+    }
+    async bundle() {
+      if(this.bundleBlob) return this.bundleBlob;
+      if(!this.job) throw new Error("No investigation is open.");
+      const response=await fetch(`${this.getAttribute("api-base")}/jobs/${this.job.id}/bundle`,{headers:{"X-Job-Token":this.job.token},cache:"no-store"});
+      if(!response.ok) throw new Error("Bundle expired or unavailable. Capture the investigation again.");
+      this.bundleBlob=await response.blob();return this.bundleBlob;
+    }
+    async exportBundle() {
+      try {this.download(await this.bundle(),"application/zip","routing-investigation.zip");}
+      catch(error) {this.status(error.message,true);}
+    }
+    async openInvestigation() {
+      const file=this.el("investigation-file").files[0];this.el("investigation-file").value="";
+      if(!file) return;
+      if(file.size>32000000) return this.status("Investigation ZIP must be at most 32 MB.",true);
+      this.setBusy(true);this.status("Checking bundle integrity and replaying saved evidence",false,true);
+      try {
+        const value=await this.request("/investigations/open",{method:"POST",headers:{"Content-Type":"application/zip"},body:file});
+        this.job=null;this.bundleBlob=file;this.investigation=value;
+        this.renderInvestigation();this.status("Saved investigation opened. No external queries were made.");
+      } catch(error) {this.status(error.message,true);} finally {this.setBusy(false);}
+    }
+    async replayInvestigation() {
+      this.setBusy(true);this.status("Reprocessing saved evidence without external queries",false,true);
+      try {
+        this.investigation=await this.request("/investigations/replay",{method:"POST",headers:{"Content-Type":"application/zip"},body:await this.bundle()});
+        this.renderInvestigation();this.status("Replay finished. Review per-input checks below.");
+      } catch(error) {this.status(error.message,true);} finally {this.setBusy(false);}
+    }
+    showSnapshot() {
+      this.payload=this.investigation.snapshots[Number(this.el("snapshot-select").value)||0];
+      this.el("results").hidden=true;
+      this.el("path-csv").hidden=true;
+      this.renderPaths();
+    }
+    renderInvestigation() {
+      const data=this.investigation,container=this.el("investigation-content");container.replaceChildren();
+      this.el("investigation-results").hidden=false;
+      this.el("comparison-export").hidden=!data.comparison;
+      const node=(tag,text,cls)=>{const el=document.createElement(tag);if(text!==undefined)el.textContent=text;if(cls)el.className=cls;return el;};
+      container.append(node("p",`Captured ${data.createdAt} · ${data.inputs.length} input(s)`));
+      container.append(node("p",data.limitation,"small muted"));
+      const version=node("details");version.append(node("summary","Provenance and replay scope"),node("pre",JSON.stringify(data.tool,null,2)),node("p",data.integrityMeaning,"small muted"),node("p",`Processing code matches capture: ${data.sameProcessingCode?"yes":"no; results use the currently installed processor"}. Saved comparison replay: ${data.comparisonReplay}.`),node("pre",JSON.stringify(data.replayTool,null,2)));container.append(version);
+      const select=this.el("snapshot-select");select.replaceChildren();
+      data.snapshots.forEach((snapshot,index)=>{
+        const option=node("option",`${index+1}: ${snapshot.requestedDate}`);option.value=String(index);select.append(option);
+        const checks=data.replay[index];
+        container.append(node("p",`Snapshot ${index+1} replay: ${checks.filter(c=>c.status==="match").length} matched; ${checks.filter(c=>c.status==="mismatch").length} mismatched; ${checks.filter(c=>c.status==="unavailable").length} unavailable.`));
+        const details=node("details");details.append(node("summary","Per-input replay checks"));checks.forEach(check=>details.append(node("p",`${check.input}: ${check.status}${check.reason?" — "+check.reason:""}`)));container.append(details);
+      });
+      if(data.comparison) {
+        container.append(node("h3","Two-date comparison"),node("p","Newly observed does not prove a new connection; not seen does not prove removal. These snapshots do not show changes between the two observation times.","warning"),node("p",data.coverageMeaning,"small muted"));
+        for(const result of data.comparison) {
+          const section=node("section",undefined,"comparison-result");container.append(section);
+          section.append(node("h4",result.input));
+          if(result.status!=="compared") {section.append(node("p",result.reason,"warning"));continue;}
+          section.append(node("p",`${result.beforeObservedAt} → ${result.afterObservedAt}`));
+          section.append(node("p",`Reporting peers: ${result.coverage.before.length} → ${result.coverage.after.length}; ${result.coverage.common.length} common; ${result.coverage.added.length} newly reporting; ${result.coverage.notSeen.length} no longer reporting.`));
+          const coverage=node("details");coverage.append(node("summary","Inspect collector-peer coverage"),node("pre",JSON.stringify(result.coverage,null,2)));section.append(coverage);
+          for(const [label,changes] of [["All observations",result.allChanges],["Common reporting peers",result.commonPeerChanges],["Relationship inferences",result.relationshipChanges]]) {
+            const details=node("details");details.append(node("summary",`${label}${changes?" · "+changes.length+" changes":" · unavailable"}`));section.append(details);
+            if(!changes) {details.append(node("p","No common reporting peers; a restricted comparison cannot be made."));continue;}
+            if(!changes.length) {details.append(node("p","No differences in the comparable evidence. This does not prove the network was unchanged."));continue;}
+            let shown=0;const more=node("button","Show more changes");more.type="button";
+            const append=()=>{for(const change of changes.slice(shown,shown+50)) {
+              const row=node("div",undefined,"path-record");row.append(node("strong",change.change),node("p",`${change.prefix} · AS${change.neighbor} → AS${change.origin}`));
+              if(change.before!==undefined) row.append(node("p",`${change.before} → ${change.after}`));
+              else {const evidence=node("details");evidence.append(node("summary","Paths and observers before / after"),node("pre",JSON.stringify(change,null,2)));row.append(evidence);}
+              details.insertBefore(row,more);
+            }shown+=50;more.hidden=shown>=changes.length;};
+            details.append(more);more.onclick=append;let loaded=false;details.ontoggle=()=>{if(details.open&&!loaded){loaded=true;append();}};
+          }
+          section.append(node("p",`CAIDA relationship dates: ${result.relationshipDates.map(d=>d||"unavailable").join(" → ")}. Direct-origin observations: ${result.beforeDirectOriginObservations} → ${result.afterDirectOriginObservations}.`,"small muted"));
+          result.warnings.forEach(w=>section.append(node("p",w,"warning")));
+        }
+      }
+      this.showSnapshot();
     }
     category(status) { return status==="mapped"?"mapped":["partial","ambiguous","multiple_networks"].includes(status)?"review":"unmapped"; }
     renderPaths() {
