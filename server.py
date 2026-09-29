@@ -1,4 +1,4 @@
-"""Local web interface and bounded job API for BGP Provider Lookup."""
+"""Local web interface and bounded job API for BGP Routing Exposure Lookup."""
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
@@ -80,7 +80,7 @@ class LookupHTTPServer(ThreadingHTTPServer):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "BGPProviderLookup/0.1"
+    server_version = "BGPRoutingExposureLookup/0.1"
 
     def log_message(self, *_):
         pass
@@ -187,7 +187,7 @@ def main():
     server = LookupHTTPServer((args.host, args.port), Handler)
     server.service_token = service_token
     server.jobs = JobStore(Datasets(args.cache))
-    print(f"Network Lookup: http://{args.host}:{args.port}", flush=True)
+    print(f"BGP Routing Exposure Lookup: http://{args.host}:{args.port}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

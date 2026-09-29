@@ -7,7 +7,7 @@
       if (this.root) return;
       this.root = this.attachShadow({mode: "open"});
       this.root.innerHTML = `<link rel="stylesheet" href="${new URL("style.css", assets)}">
-        <div class="view-tabs" role="tablist" aria-label="Lookup view"><button role="tab" id="paths-tab" aria-selected="true">Provider paths</button><button role="tab" id="origins-tab" aria-selected="false">Origin mapping</button></div>
+        <div class="view-tabs" role="tablist" aria-label="Lookup view"><button role="tab" id="paths-tab" aria-selected="true">Observed BGP paths</button><button role="tab" id="origins-tab" aria-selected="false">Origin mapping</button></div>
         <form><section class="entry"><div><div class="entry-head"><label for="resources">IP addresses &amp; networks</label><div class="row"><button type="button" id="example" title="Load example addresses">Example</button><button type="button" id="import">${icon("upload")}Import file</button><input id="file" type="file" accept=".csv,.txt,.tsv,text/plain,text/csv" hidden></div></div>
         <textarea id="resources" spellcheck="false" placeholder="129.55.110.9&#10;129.55.0.0/24" aria-label="IP addresses, CIDRs, or start-end ranges"></textarea><p class="privacy" id="filename">CSV, TSV, or TXT · Up to 1,000 entries</p></div>
         <div class="configuration"><fieldset><legend>Routing date</legend><div class="mode"><label><input name="mode" type="radio" value="latest" checked><span>Latest</span></label><label><input name="mode" type="radio" value="historical"><span>Historical</span></label></div><div class="date-wrap" hidden><label for="date">Snapshot date (UTC)</label><input id="date" type="date" min="2005-05-09"></div></fieldset><button class="primary" id="resolve" type="submit">${icon("search")}Resolve networks</button><p class="privacy">Inputs stay on the lookup server. No connections are made to imported IPs.</p></div></section></form>
@@ -17,7 +17,7 @@
         <div class="result-head"><h2>Network attribution</h2><div class="toolbar"><input id="search" type="search" placeholder="Filter results" aria-label="Filter results"><select id="filter" aria-label="Result status"><option value="all">All results</option><option value="mapped">Mapped</option><option value="review">Needs review</option><option value="unmapped">Unmapped</option></select><button id="csv" class="icon" title="Export CSV" aria-label="Export CSV">${icon("download")}</button><button id="json" title="Export JSON">JSON</button></div></div>
         <div class="table-wrap"><table><thead><tr><th>Input / covered range</th><th>Matched BGP prefix</th><th>Origin ASN</th><th>Network organization</th><th>Status</th><th>Routing snapshot</th></tr></thead><tbody id="rows"></tbody></table></div><div id="sources" class="sources"></div><p id="row-count" class="small muted"></p></section>
         <div id="empty" class="empty">${icon("network")}<div>No lookup results</div></div>
-        <section id="path-results" hidden><div class="result-head"><h2>Paths to origin networks</h2><div class="toolbar"><button id="path-csv" title="Export provider paths as CSV" aria-label="Export provider paths as CSV">${icon("download")}CSV</button><button id="path-json" title="Export provider paths as JSON" aria-label="Export provider paths as JSON">JSON</button></div></div><div id="path-content"></div></section>
+        <section id="path-results" hidden><div class="result-head"><h2>Observed paths to origin networks</h2><div class="toolbar"><button id="path-csv" title="Export observed BGP paths as CSV" aria-label="Export observed BGP paths as CSV">${icon("download")}CSV</button><button id="path-json" title="Export observed BGP paths as JSON" aria-label="Export observed BGP paths as JSON">JSON</button></div></div><div id="path-content"></div></section>
         <footer class="footer">Data: <a href="https://stat.ripe.net/docs/data-api/api-endpoints/bgp-state" target="_blank" rel="noreferrer">RIPE RIS paths</a>, <a href="https://www.caida.org/catalog/datasets/as-relationships/" target="_blank" rel="noreferrer">CAIDA AS Relationships</a>, <a href="https://www.caida.org/catalog/datasets/routeviews-prefix2as/" target="_blank" rel="noreferrer">RouteViews prefix-to-AS</a>, and <a href="https://www.caida.org/catalog/datasets/as-organizations/" target="_blank" rel="noreferrer">AS Organizations</a>. Relationship classifications are inferences; collector peer counts are not traffic share.</footer>`;
       const today = new Date().toISOString().slice(0,10);
       this.el("date").max = today;
@@ -47,7 +47,7 @@
       this.el("csv").onclick = () => this.downloadCsv();
       this.el("json").onclick = () => this.download(JSON.stringify(this.payload,null,2), "application/json", "network-lookup.json");
       this.el("path-csv").onclick=()=>this.downloadCsv();
-      this.el("path-json").onclick=()=>this.download(JSON.stringify(this.payload,null,2),"application/json","provider-paths.json");
+      this.el("path-json").onclick=()=>this.download(JSON.stringify(this.payload,null,2),"application/json","observed-paths.json");
       this.setView("paths");
       this.el("resources").value="AS63";
     }
@@ -62,11 +62,11 @@
       this.el("resources").placeholder=paths?"AS63\n129.55.110.9\n129.55.0.0/24":"129.55.110.9\n129.55.0.0/24";
       this.el("resources").setAttribute("aria-label",paths?"ASNs, IP addresses, or CIDRs":"IP addresses, CIDRs, or start-end ranges");
       if (!paths && this.el("resources").value==="AS63") this.el("resources").value="129.55.110.9";
-      this.el("resolve").innerHTML=icon("search")+(paths?"Find provider paths":"Resolve networks");
+      this.el("resolve").innerHTML=icon("search")+(paths?"Find observed paths":"Resolve networks");
       this.el("filename").textContent=paths?"CSV, TSV, or TXT · Up to 20 entries":"CSV, TSV, or TXT · Up to 1,000 entries";
       this.root.querySelector(".configuration .privacy").textContent=paths?"Public IP, prefix, or ASN queries are sent to RIPE NCC. No connections are made to imported IPs.":"Inputs stay on the lookup server. No connections are made to imported IPs.";
       this.root.querySelector('label[for="date"]').textContent=paths?"Observation date (12:00 UTC)":"Snapshot date (UTC)";
-      this.el("notice").textContent=paths?"Incoming networks are observed immediately before the origin AS. Transit and peering relationships are inferred from CAIDA data; paths reflect RIS observation points.":"BGP identifies the announcing network. Its organization may be an ISP, cloud provider, or the organization itself; upstream providers are not inferred in this view.";
+      this.el("notice").textContent=paths?"Observed adjacent ASes appear immediately before the origin AS in RIS paths. Relationships are inferred from separate CAIDA data. These adjacencies represent potential ingress worth investigating; they do not confirm traffic flow, a reachable entry point, a security perimeter, or a vulnerability.":"BGP identifies the announcing network. Its organization may be an ISP, cloud provider, or the organization itself; upstream providers are not inferred in this view.";
       this.status("Ready");
     }
     status(message, error=false, busy=false) { this.el("status").textContent=message; this.el("status").className=`status${error?" error":""}${busy?" busy":""}`; }
@@ -129,9 +129,9 @@
         for(const group of result.groups) {
           const org=result.asns[String(group.origin)]?.name||"Organization not found";
           section.append(node("h3",`AS${group.origin} · ${org}`));
-          section.append(node("p",`${group.neighbors.length} incoming networks · ${group.collectors.length} RIS collectors · ${group.peerCount} distinct collector peers`,"small muted"));
+          section.append(node("p",`${group.neighbors.length} observed adjacent ASes · ${group.collectors.length} RIS collectors · ${group.peerCount} distinct collector peers`,"small muted"));
           const wrapper=node("div",undefined,"table-wrap paths-table");const table=node("table");wrapper.append(table);section.append(wrapper);
-          const thead=node("thead"),heading=node("tr");["Incoming network","Relationship (inferred)","RIS peers","Collectors","Path to origin"].forEach(text=>heading.append(node("th",text)));thead.append(heading);table.append(thead);
+          const thead=node("thead"),heading=node("tr");["Observed adjacent AS","Relationship (inferred)","RIS peers","Collectors","Observed adjacency"].forEach(text=>heading.append(node("th",text)));thead.append(heading);table.append(thead);
           const tbody=node("tbody");table.append(tbody);
           for(const neighbor of group.neighbors) {
             const row=node("tr");tbody.append(row);
@@ -153,7 +153,7 @@
             let opened=false;details.addEventListener("toggle",()=>{if(details.open&&!opened){opened=true;appendPaths();}});more.onclick=appendPaths;
             if(neighbor.pathsTruncated)details.append(node("p",`Evidence is limited to ${neighbor.paths.length} path/prefix combinations for this neighbor. Counts include all returned RIS routes.`,"warning"));
           }
-          if(!group.neighbors.length){const row=node("tr"),cell=node("td","Only direct origin observations were available; no incoming network can be identified.");cell.colSpan=5;row.append(cell);tbody.append(row);}
+          if(!group.neighbors.length){const row=node("tr"),cell=node("td","Only direct origin observations were available; no observed adjacent AS can be identified.");cell.colSpan=5;row.append(cell);tbody.append(row);}
         }
         const sources=node("div",undefined,"sources");section.append(sources);
         const source=(entry,label)=>{if(!entry)return;const a=node("a",label);if(!/^https:\/\/(?:stat\.ripe\.net\/data\/bgp-state\/|publicdata\.caida\.org\/datasets\/)/.test(entry.url))return;a.href=entry.url;a.target="_blank";a.rel="noreferrer";sources.append(a);};
@@ -224,7 +224,7 @@
       try {
         const response=await fetch(`${this.getAttribute("api-base")}/jobs/${this.job.id}/export`,{headers:{"X-Job-Token":this.job.token},cache:"no-store"});
         if(!response.ok) throw new Error("Export expired or unavailable. Run the lookup again.");
-        this.download(await response.text(),"text/csv",this.payload.kind==="paths"?"provider-paths.csv":"network-lookup.csv");
+        this.download(await response.text(),"text/csv",this.payload.kind==="paths"?"observed-paths.csv":"network-lookup.csv");
       } catch(error) {this.status(error.message,true);}
     }
   }

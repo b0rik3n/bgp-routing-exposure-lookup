@@ -32,7 +32,7 @@ def parse_path_resource(raw):
         return {"input": value, "resource": f"AS{asn}", "asn": asn}
     item = parse_resource(value)
     if "-" in item["normalized"]:
-        raise LookupError("Provider paths accept IPs, CIDRs, or ASNs such as AS63. Convert ranges to CIDRs.")
+        raise LookupError("Observed BGP paths accept IPs, CIDRs, or ASNs such as AS63. Convert ranges to CIDRs.")
     return {**item, "resource": item["normalized"]}
 
 
@@ -173,7 +173,7 @@ class PathLookup:
         if cached and time.time() - cached[0] < (300 if requested == "latest" else 3600):
             return cached[1], url
         try:
-            req = Request(url, headers={"User-Agent": "BGPProviderLookup/0.2", "Accept": "application/json"})
+            req = Request(url, headers={"User-Agent": "BGPRoutingExposureLookup/0.2", "Accept": "application/json"})
             with build_opener(NoRedirect(), HTTPSHandler(context=https_context())).open(req, timeout=45) as response:
                 raw = response.read(12_000_001)
             if len(raw) > 12_000_000:
@@ -224,7 +224,7 @@ class PathLookup:
                 result.update(status="invalid", error=item["error"])
                 continue
             if "asn" not in item and is_special(item):
-                result.update(status="special_use", error="Private or special-use address space has no public provider path lookup.")
+                result.update(status="special_use", error="Private or special-use address space has no public observed BGP path lookup.")
                 continue
             try:
                 progress(f"Reading RIS paths for {item['resource']} ({i + 1}/{len(items)})")
@@ -238,7 +238,7 @@ class PathLookup:
                     result.update(status="not_observed")
                     continue
                 observed_date = state["timestamp"][:10]
-                progress("Resolving network names and provider relationships")
+                progress("Resolving network names and inferred relationships")
                 try:
                     organizations, provenance = self.datasets.organizations(observed_date, progress)
                     result["organizations"] = provenance
@@ -256,7 +256,7 @@ class PathLookup:
             except LookupError as exc:
                 result.update(status="error", error=str(exc))
         return {"kind": "paths", "requestedDate": requested, "generatedAt": datetime.now(timezone.utc).isoformat(),
-                "meaning": "Observed BGP neighbors and inferred relationships, not contractual proof or a measurement from your network.", "results": results}
+                "meaning": "Observed adjacent ASes and separately inferred relationships. Potential ingress is an interpretation, not confirmation of traffic flow, a reachable entry point, a security perimeter, or a vulnerability; paths are not a measurement from your network.", "results": results}
 
 
 def path_csv_export(payload):

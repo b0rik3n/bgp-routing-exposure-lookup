@@ -203,7 +203,7 @@ class Datasets:
 
     def fetch(self, url: str, max_bytes=50_000_000) -> bytes:
         validate_dataset_url(url)
-        request = Request(url, headers={"User-Agent": "BGPProviderLookup/0.1", "Accept": "*/*"})
+        request = Request(url, headers={"User-Agent": "BGPRoutingExposureLookup/0.1", "Accept": "*/*"})
         try:
             with build_opener(RestrictedRedirect(), HTTPSHandler(context=https_context())).open(request, timeout=45) as response:
                 value = response.read(max_bytes + 1)
@@ -423,7 +423,7 @@ def main():
     parser.add_argument("--input", type=Path)
     parser.add_argument("--date", default="latest", help="YYYY-MM-DD or latest")
     parser.add_argument("--format", choices=["json", "csv"], default="json")
-    parser.add_argument("--paths", action="store_true", help="Find observed provider paths for IPs, CIDRs, or ASNs")
+    parser.add_argument("--paths", action="store_true", help="Find observed BGP paths for IPs, CIDRs, or ASNs")
     parser.add_argument("--cache", type=Path, default=Path(__file__).parent / "data")
     args = parser.parse_args()
     try:

@@ -3,8 +3,10 @@
 .standalone { margin:0; background:#101415; color:#e9eeee; font:14px/1.5 system-ui,sans-serif; }
 .standalone main { max-width:1440px; margin:auto; padding:28px 32px; }
 .standalone-header { border-bottom:1px solid #333c3e; padding-bottom:20px; margin-bottom:22px; }
-.standalone-header span { color:#79cec2; font-size:11px; }
-h1 { font-size:26px; font-weight:600; margin:5px 0 0; }
+.standalone-header h1 { font-size:26px; font-weight:400; margin:0; line-height:1.4; }
+.standalone-header strong { font-weight:700; }
+.standalone-header span { color:#b1bdbf; }
+.standalone-header .brand-divider { padding:0 6px; }
 button,input,textarea,select { font:inherit; letter-spacing:0; }
 button { cursor:pointer; border:1px solid #435053; border-radius:5px; color:#e9eeee; background:#252e30; min-height:36px; padding:7px 12px; display:inline-flex; align-items:center; justify-content:center; gap:7px; }
 button:hover:not(:disabled) { background:#354246; }
