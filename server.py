@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import socket
 import threading
 import time
 from urllib.parse import urlparse
@@ -25,7 +26,8 @@ ASSETS = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascri
 
 
 class JobStore:
-    def __init__(self, datasets, gate=None):
+    def __init__(self, datasets, gate=None, result_budget=128_000_000):
+        self.result_budget = result_budget
         self.datasets = datasets
         self.paths = PathLookup(datasets, gate)
         self.jobs = {}
@@ -36,13 +38,30 @@ class JobStore:
     def create(self, text, requested, mode="origins", comparison_date=None):
         self.purge()
         with self.lock:
-            if len(self.jobs) >= 40 or not self.capacity.acquire(blocking=False):
+            if not self.capacity.acquire(blocking=False):
+                raise LookupError("Lookup service is busy. Retry shortly.")
+            if len(self.jobs) >= 40:
+                self.evict_finished()
+            if len(self.jobs) >= 40:
+                self.capacity.release()
                 raise LookupError("Lookup service is busy. Retry shortly.")
             job_id, token = secrets.token_hex(16), secrets.token_urlsafe(32)
             job = {"id": job_id, "token": token, "created": time.time(), "state": "queued", "message": "Queued"}
             self.jobs[job_id] = job
         self.pool.submit(self.run, job_id, text, requested, mode, comparison_date)
         return {"id": job_id, "token": token}
+
+    def evict_finished(self):
+        # Caller holds the lock; active work is never evicted.
+        finished = [(key, job) for key, job in self.jobs.items() if job["state"] not in ("queued", "running")]
+        if not finished:
+            return False
+        key, _ = min(finished, key=lambda item: item[1].get("finished", item[1]["created"]))
+        del self.jobs[key]
+        return True
+
+    def retained_bytes(self):
+        return sum(len(j.get("result_bytes", b"")) + len(j.get("bundle", b"")) for j in self.jobs.values())
 
     def purge(self):
         with self.lock:
@@ -68,6 +87,11 @@ class JobStore:
             with self.lock:
                 if job_id in self.jobs:
                     self.jobs[job_id].update(state="running", message=message)
+        def report(value):
+            with self.lock:
+                if job_id in self.jobs:
+                    self.jobs[job_id]["progress"] = value
+        progress.report = report
         try:
             checkpoint()
             self.datasets.checkpoint = checkpoint
@@ -79,18 +103,21 @@ class JobStore:
                     result, bundle = build_investigation(self.paths, text, dates, progress)
                 else:
                     result = self.paths.lookup(text, requested, progress) if mode == "paths" else run_lookup(text, requested, self.datasets, progress)
+            encoded = json.dumps(result, separators=(",", ":"), allow_nan=False).encode()
+            amount = len(encoded) + len(bundle or b"")
+            if amount > self.result_budget:
+                raise LookupError("Result exceeds the shared storage budget. Split the input into smaller batches.")
             with self.lock:
                 if job_id in self.jobs:
+                    while self.retained_bytes() + amount > self.result_budget:
+                        if not self.evict_finished():
+                            raise LookupError("Result storage is full. Split the input into smaller batches.")
+                    cancelled = self.jobs[job_id].get('cancelRequested', False)
+                    self.jobs[job_id].update(state="cancelled" if cancelled else "complete",
+                        message="Cancelled; completed results are available." if cancelled else "Complete",
+                        result_bytes=encoded, finished=time.time())
                     if bundle:
-                        # Bound retained archives; evict oldest archives, not live results.
-                        budget = sum(len(j.get("bundle", b"")) for j in self.jobs.values())
-                        for old in sorted(self.jobs.values(), key=lambda j: j["created"]):
-                            if budget + len(bundle) <= 64_000_000:
-                                break
-                            budget -= len(old.pop("bundle", b""))
                         self.jobs[job_id]["bundle"] = bundle
-                    cancelled = self.jobs[job_id].get('cancelRequested',False)
-                    self.jobs[job_id].update(state="cancelled" if cancelled else "complete", message="Cancelled; completed results are available." if cancelled else "Complete", result=result, finished=time.time())
         except CancelWork:
             with self.lock:
                 if job_id in self.jobs:
@@ -115,7 +142,11 @@ class JobStore:
             job = self.jobs.get(job_id)
             if not job or (job.get("state") not in ("queued","running") and time.time() - job.get("finished",job["created"]) >= 3600) or not secrets.compare_digest(job["token"], token):
                 return None
-            return {key: value for key, value in job.items() if key not in ("token", "created", "bundle", "finished")}
+            value = {key: value for key, value in job.items() if key not in ("token", "created", "bundle", "finished", "result_bytes")}
+            encoded = job.get("result_bytes")
+        if encoded is not None:
+            value["result"] = json.loads(encoded)
+        return value
 
     def bundle(self, job_id, token):
         with self.lock:
@@ -126,12 +157,74 @@ class JobStore:
 
 
 class LookupHTTPServer(ThreadingHTTPServer):
+    max_connections = 32
+    header_deadline = 15
+    idle_timeout = 10
+
+    def __init__(self, *args, **kwargs):
+        self.connections = threading.BoundedSemaphore(self.max_connections)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address):
+        if not self.connections.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            request.settimeout(self.idle_timeout)
+            super().process_request(request, client_address)
+        except Exception:
+            self.connections.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.connections.release()
+
     def service_actions(self):
         self.jobs.purge()
 
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "BGPRoutingExposureLookup/0.1"
+
+    def expire_connection(self):
+        self.connection_expired = True
+        try:
+            self.connection.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+    def handle_one_request(self):
+        self.connection_expired = False
+        self.header_timer = threading.Timer(self.server.header_deadline, self.expire_connection)
+        self.header_timer.daemon = True
+        self.header_timer.start()
+        try:
+            super().handle_one_request()
+        except (BrokenPipeError, ConnectionResetError):
+            self.close_connection = True
+        finally:
+            self.header_timer.cancel()
+
+    def parse_request(self):
+        try:
+            return super().parse_request() and not self.connection_expired
+        finally:
+            self.header_timer.cancel()
+
+    def read_body(self, size, deadline):
+        timer = threading.Timer(deadline, self.expire_connection)
+        timer.daemon = True
+        timer.start()
+        try:
+            raw = self.rfile.read(size)
+            if len(raw) != size:
+                raise LookupError("Incomplete upload. Try again.")
+            return raw
+        finally:
+            timer.cancel()
 
     def log_message(self, *_):
         pass
@@ -218,7 +311,7 @@ class Handler(BaseHTTPRequestHandler):
             if size <= 0 or size > MAX_TEXT * 2:
                 return self.reply({"error": "Import exceeds the size limit"}, 413)
             self.connection.settimeout(15)
-            body = json.loads(self.rfile.read(size))
+            body = json.loads(self.read_body(size, 30))
             if not isinstance(body, dict):
                 raise LookupError("Invalid import.")
             text, requested = body.get("text"), body.get("date", "latest")
@@ -252,7 +345,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(job, 202)
         except LookupError as exc:
             return self.reply({"error": str(exc)}, 429 if "busy" in str(exc) else 400)
-        except (ValueError, TypeError, csv.Error, TimeoutError):
+        except (ValueError, TypeError, csv.Error, TimeoutError, RecursionError):
             return self.reply({"error": "Invalid import or date"}, 400)
 
     def import_investigation(self):
@@ -266,9 +359,7 @@ class Handler(BaseHTTPRequestHandler):
             if not 0 < size <= MAX_BUNDLE:
                 return self.reply({"error": "Investigation must be at most 32 MB"}, 413)
             self.connection.settimeout(30)
-            raw = self.rfile.read(size)
-            if len(raw) != size:
-                raise LookupError("Incomplete investigation upload.")
+            raw = self.read_body(size, 60)
             result = open_investigation(raw)
             return self.reply(result)
         except (LookupError, ValueError, TimeoutError, OSError) as exc:

@@ -12,7 +12,7 @@
         <textarea id="resources" spellcheck="false" placeholder="129.55.110.9&#10;129.55.0.0/24" aria-label="IP addresses, CIDRs, or start-end ranges"></textarea><p class="privacy" id="filename">CSV, TSV, or TXT · Up to 1,000 entries</p></div>
         <div class="configuration"><fieldset><legend>Routing date</legend><div class="mode"><label><input name="mode" type="radio" value="latest" checked><span>Latest</span></label><label><input name="mode" type="radio" value="historical"><span>Historical</span></label></div><div class="date-wrap" hidden><label for="date">Snapshot date (UTC)</label><input id="date" type="date" min="2005-05-09"></div></fieldset><button class="primary" id="resolve" type="submit">${icon("search")}Resolve networks</button><p class="privacy">Inputs stay on the lookup server. No connections are made to imported IPs.</p></div></section></form>
         <details id="investigation-tools" class="investigation-tools"><summary>Save and compare investigations</summary>
-          <p class="muted">Capture observed BGP paths with their evidence, or open a saved ZIP without external queries. Up to 20 inputs; origin mapping is not included.</p>
+          <p class="muted">Capture observed BGP paths with their evidence, or open a saved ZIP without external queries. Up to 1,000 inputs; origin mapping is not included.</p>
           <div class="toolbar"><button type="button" id="capture">Capture investigation</button><button type="button" id="open-investigation">Open investigation</button><input id="investigation-file" type="file" accept=".zip,application/zip" hidden></div>
           <p class="small muted">Capture uses the inputs and routing date above. Export the ZIP after capture to keep it beyond this session.</p>
           <div class="comparison-dates"><label>Earlier date (12:00 UTC)<input id="compare-before" type="date" min="2005-05-09"></label><label>Later date (12:00 UTC)<input id="compare-after" type="date" min="2005-05-09"></label><button type="button" id="compare-dates">Compare dates</button></div>
@@ -21,13 +21,15 @@
         <p id="request-count" class="small muted" role="status"></p>
         <p id="request-notice" class="warning" role="alert" hidden></p>
         <div class="notice" id="notice"></div>
+        <p id="batch-progress" role="status" hidden></p>
+        <p id="result-completeness" class="warning" role="status" hidden></p>
         <button id="cancel-job" type="button" hidden>Cancel lookup</button>
         <div id="status" class="status" role="status" aria-live="polite">Ready</div>
         <section id="results" hidden><div class="summary"><div class="metric"><strong id="total">0</strong><span>Imported</span></div><div class="metric mapped"><strong id="mapped">0</strong><span>Mapped</span></div><div class="metric review"><strong id="review">0</strong><span>Review</span></div><div class="metric"><strong id="unmapped">0</strong><span>Unmapped</span></div></div>
         <div class="result-head"><h2>Network attribution</h2><div class="toolbar"><input id="search" type="search" placeholder="Filter results" aria-label="Filter results"><select id="filter" aria-label="Result status"><option value="all">All results</option><option value="mapped">Mapped</option><option value="review">Needs review</option><option value="unmapped">Unmapped</option></select><button id="csv" class="icon" title="Export CSV" aria-label="Export CSV">${icon("download")}</button><button id="json" title="Export JSON">JSON</button></div></div>
         <div class="table-wrap"><table><thead><tr><th>Input / covered range</th><th>Matched BGP prefix</th><th>Origin ASN</th><th>Network organization</th><th>Status</th><th>Routing snapshot</th></tr></thead><tbody id="rows"></tbody></table></div><div id="sources" class="sources"></div><p id="row-count" class="small muted"></p></section>
         <div id="empty" class="empty">${icon("network")}<div>No lookup results</div></div>
-        <section id="path-results" hidden><div class="result-head"><h2>Observed paths to origin networks</h2><div class="toolbar"><button id="path-csv" title="Export observed BGP paths as CSV" aria-label="Export observed BGP paths as CSV">${icon("download")}CSV</button><button id="path-json" title="Export observed BGP paths as JSON" aria-label="Export observed BGP paths as JSON">JSON</button></div></div><div id="path-content"></div></section>
+        <section id="path-results" hidden><div class="result-head"><h2>Observed paths to origin networks</h2><div class="toolbar"><button id="path-csv" title="Export observed BGP paths as CSV" aria-label="Export observed BGP paths as CSV">${icon("download")}CSV</button><button id="path-json" title="Export observed BGP paths as JSON" aria-label="Export observed BGP paths as JSON">JSON</button></div></div><p class="small muted">Observed routing advertisements—not measured traffic paths. Collector and peer counts describe visibility, not confidence or traffic share. Relationships are separately inferred; an adjacency does not confirm an entry point or vulnerability.</p><div id="path-content"></div></section>
         <footer class="footer">Data: <a href="https://stat.ripe.net/docs/data-api/api-endpoints/bgp-state" target="_blank" rel="noreferrer">RIPE RIS paths</a>, <a href="https://www.caida.org/catalog/datasets/as-relationships/" target="_blank" rel="noreferrer">CAIDA AS Relationships</a>, <a href="https://www.caida.org/catalog/datasets/routeviews-prefix2as/" target="_blank" rel="noreferrer">RouteViews prefix-to-AS</a>, and <a href="https://www.caida.org/catalog/datasets/as-organizations/" target="_blank" rel="noreferrer">AS Organizations</a>. Relationship classifications are inferences; collector peer counts are not traffic share.</footer>`;
       const today = new Date().toISOString().slice(0,10);
       this.el("date").max = today;
@@ -88,13 +90,38 @@
       this.el("resources").setAttribute("aria-label",paths?"ASNs, IP addresses, or CIDRs":"IP addresses, CIDRs, or start-end ranges");
       if (!paths && this.el("resources").value==="AS63") this.el("resources").value="129.55.110.9";
       this.el("resolve").innerHTML=icon("search")+(paths?"Find observed paths":"Resolve networks");
-      this.el("filename").textContent=paths?"CSV, TSV, or TXT · Up to 20 entries":"CSV, TSV, or TXT · Up to 1,000 entries";
+      this.el("filename").textContent=paths?"CSV, TSV, or TXT · Up to 1,000 entries":"CSV, TSV, or TXT · Up to 1,000 entries";
       this.root.querySelector(".configuration .privacy").textContent=paths?"Public IP, prefix, or ASN queries are sent to RIPE NCC. No connections are made to imported IPs.":"Inputs stay on the lookup server. No connections are made to imported IPs.";
       this.root.querySelector('label[for="date"]').textContent=paths?"Observation date (12:00 UTC)":"Snapshot date (UTC)";
       this.el("notice").textContent=paths?"Observed adjacent ASes appear immediately before the origin AS in RIS paths. Relationships are inferred from separate CAIDA data. These adjacencies represent potential ingress worth investigating; they do not confirm traffic flow, a reachable entry point, a security perimeter, or a vulnerability.":"BGP identifies the announcing network. Its organization may be an ISP, cloud provider, or the organization itself; upstream providers are not inferred in this view.";
       this.status("Ready");
     }
     status(message, error=false, busy=false) { this.el("status").textContent=message; this.el("status").className=`status${error?" error":""}${busy?" busy":""}`; }
+    showProgress(value) {
+      const element=this.el("batch-progress");
+      element.hidden=!value;
+      if(!value)return;
+      const snapshot=value.snapshot?`Snapshot ${value.snapshot} of ${value.snapshots} (${value.date}) · `:"";
+      element.textContent=`${snapshot}${value.processed} of ${value.total} processed · ${value.completed} completed · ${value.failed} failed · ${value.skipped} special-use skipped · ${value.remaining} remaining${value.notRequested?` (${value.notRequested} not requested)`:""}${value.current?` · Current: ${value.current}`:""}`;
+    }
+    showCompleteness() {
+      const results=this.payload.results;
+      const failed=results.filter(r=>["error","invalid"].includes(r.status)).length;
+      const pending=results.filter(r=>r.status==="not_requested").length;
+      const skipped=results.filter(r=>r.status==="special_use").length;
+      const warned=results.filter(r=>r.warnings?.length).length;
+      const truncated=results.filter(r=>r.groups?.some(g=>g.neighbors.some(n=>n.pathsTruncated))).length;
+      const partial=results.filter(r=>r.status==="partial").length;
+      const completed=results.length-failed-pending-skipped;
+      const element=this.el("result-completeness");element.hidden=false;
+      const needsReview=failed||pending||warned||truncated||partial||this.payload.incomplete;
+      element.className=needsReview?"warning":"small muted";
+      element.textContent=`${needsReview?"Results need review. ":""}${completed} completed · ${failed} failed/invalid · ${pending} not requested · ${skipped} special-use skipped. ${warned} inputs with warnings · ${truncated} with truncated path evidence · ${partial} with partial coverage. `+
+        (this.payload.incomplete?`Stopped: ${this.payload.incomplete} `:"")+
+        (failed||pending?"Export completed results, then retry failed or unprocessed inputs. ":"")+
+        (truncated?"Displayed path evidence is limited; narrow the target to investigate further. ":"")+
+        (warned?"Review per-input warnings for unavailable data or excluded observations. ":"");
+    }
     async request(path, options={}) {
       const response = await fetch(this.getAttribute("api-base") + path, {...options, cache:"no-store", signal:this.controller?.signal});
       const payload = await response.json().catch(() => ({}));
@@ -107,6 +134,7 @@
       this.controller = new AbortController();
       this.job=null;this.el("cancel-job").hidden=true;
       this.payload = null;
+      this.showProgress(null);this.el("result-completeness").hidden=true;
       this.investigation=null;this.bundleBlob=null;
       this.el("investigation-results").hidden=true;
       this.el("path-csv").hidden=false;
@@ -158,6 +186,7 @@
     async poll() {
       try {
         const job = await this.request(`/jobs/${this.job.id}`, {headers:{"X-Job-Token":this.job.token}});
+        this.showProgress(job.progress);
         if (job.state === "failed") throw new Error(job.message);
         if (job.state === "cancelled" && !job.result) {this.status(job.message);this.setBusy(false);return;}
         if (job.state === "complete" || job.state === "cancelled") {
@@ -167,7 +196,7 @@
           }
           this.payload=job.result;
           if(this.payload.kind==="paths") this.renderPaths(); else this.render();
-          this.status(job.state==="cancelled"?"Cancelled. Export any completed results before leaving.":this.payload.incomplete?`Partial results: ${this.payload.incomplete}`:"Lookup complete");
+          this.status(job.state==="cancelled"?"Cancelled. Export any completed results before leaving.":this.payload.incomplete?`Partial results: ${this.payload.incomplete}`:"Processing finished. Review the result summary below.");
           this.setBusy(false);
           return;
         }
@@ -193,7 +222,7 @@
       this.setBusy(true);this.status("Checking bundle integrity and replaying saved evidence",false,true);
       try {
         const value=await this.request("/investigations/open",{method:"POST",headers:{"Content-Type":"application/zip"},body:file});
-        this.job=null;this.bundleBlob=file;this.investigation=value;
+        this.showProgress(null);this.job=null;this.bundleBlob=file;this.investigation=value;
         this.renderInvestigation();this.status("Saved investigation opened. No external queries were made.");
       } catch(error) {this.status(error.message,true);} finally {this.setBusy(false);}
     }
@@ -255,14 +284,15 @@
     }
     category(status) { return status==="mapped"?"mapped":["partial","ambiguous","multiple_networks"].includes(status)?"review":"unmapped"; }
     renderPaths() {
+      this.showCompleteness();
       this.el("empty").hidden=true;this.el("path-results").hidden=false;
       const container=this.el("path-content");container.replaceChildren();
       const node=(tag,text,cls)=>{const element=document.createElement(tag);if(text!==undefined)element.textContent=text;if(cls)element.className=cls;return element;};
       const relationshipLabels={provider:"Transit provider",peer:"Peer",customer:"Customer",unknown:"Unknown"};
       for (const result of this.payload.results) {
         const section=node("section",undefined,"path-result");container.append(section);
-        section.append(node("p",result.input,"input-label"));
-        if(result.error || !result.groups.length) section.append(node("p",result.error||"No paths to an origin were observed for this input.","muted"));
+        section.append(node("p",`${result.input} · ${labels[result.status]||result.status}`,"input-label"));
+        if(result.error || !result.groups.length) section.append(node("p",result.error||"No paths to an origin were observed for this input.",result.error?"warning":"muted"));
         for(const warning of result.warnings) section.append(node("p",warning,"warning"));
         for(const group of result.groups) {
           const org=result.asns[String(group.origin)]?.name||"Organization not found";
@@ -298,7 +328,7 @@
               shown=end;more.hidden=shown>=neighbor.paths.length;
             };
             let opened=false;details.addEventListener("toggle",()=>{if(details.open&&!opened){opened=true;appendPaths();}});more.onclick=appendPaths;
-            if(neighbor.pathsTruncated)details.append(node("p",`Evidence is limited to ${neighbor.paths.length} path/prefix combinations for this neighbor. Counts include all returned RIS routes.`,"warning"));
+            if(neighbor.pathsTruncated)cell.append(node("p",`Evidence is limited to ${neighbor.paths.length} path/prefix combinations for this neighbor. Counts include all returned RIS routes.`,"warning"));
           }
           if(!group.neighbors.length){const row=node("tr"),cell=node("td","Only direct origin observations were available; no observed adjacent AS can be identified.");cell.colSpan=5;row.append(cell);tbody.append(row);}
         }
@@ -310,6 +340,7 @@
       }
     }
     render() {
+      this.showCompleteness();
       this.el("empty").hidden=true;
       this.el("results").hidden=false;
       const counts={mapped:0,review:0,unmapped:0};

@@ -29,6 +29,9 @@ class CancelTests(TestCase):
                     self.assertTrue(store.cancel(job['id'],job['token']));release.set()
                     result=self.wait(store,job)
                 self.assertEqual(result['state'],'cancelled');self.assertEqual(fetch.call_count,1)
+                self.assertEqual(result['progress']['completed'],1)
+                self.assertEqual(result['progress']['remaining'],1)
+                self.assertEqual(result['progress']['notRequested'],1)
                 self.assertEqual([x['status'] for x in result['result']['results']],['not_observed','not_requested'])
             finally:release.set();store.pool.shutdown()
     def test_queued_cancel_does_not_execute_lookup(self):

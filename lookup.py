@@ -370,6 +370,8 @@ def run_lookup(text: str, requested: str, datasets: Datasets, progress=lambda _:
                 raise ValueError()
         except (ValueError, TypeError):
             raise LookupError("Select a date from 2005-05-09 through today.")
+    from batch_progress import BatchProgress
+    batch = BatchProgress(progress, len(inputs))
     families = {}
     family_errors = {}
     for version in sorted({item["version"] for item in inputs if "error" not in item and not is_special(item)}):
@@ -384,6 +386,7 @@ def run_lookup(text: str, requested: str, datasets: Datasets, progress=lambda _:
     results = []
     remaining = MAX_SEGMENTS
     for i, item in enumerate(inputs):
+        batch.start(item["input"])
         try:
             progress(f"Resolving entry {i + 1} of {len(inputs)}")
         except CancelWork as exc:
@@ -406,6 +409,7 @@ def run_lookup(text: str, requested: str, datasets: Datasets, progress=lambda _:
             except LookupError as exc:
                 result = {"input": item["input"], "status": "error", "error": str(exc), "segments": []}
         results.append(result)
+        batch.finish(result["status"])
     return {"incomplete":halted,"requestedDate": requested, "generatedAt": datetime.now(timezone.utc).isoformat(),
             "source": "CAIDA RouteViews prefix-to-AS and AS Organizations datasets",
             "meaning": "Origin network organization; not proof of retail ISP, upstream transit, physical location, or ownership.",

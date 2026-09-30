@@ -1,7 +1,8 @@
 :host { display:block; color:#e9eeee; font:14px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; letter-spacing:0; color-scheme:dark; }
 * { box-sizing:border-box; }
 .standalone { margin:0; background:#101415; color:#e9eeee; font:14px/1.5 system-ui,sans-serif; }
-.standalone main { max-width:1440px; margin:auto; padding:28px 32px; }
+.coqui-background { position:fixed; right:18px; bottom:16px; width:clamp(110px,15vw,200px); height:auto; color:#8ce1cd; opacity:.035; pointer-events:none; user-select:none; z-index:0; }
+.standalone main { position:relative; z-index:1; max-width:1440px; margin:auto; padding:28px 32px; }
 .standalone-header { border-bottom:1px solid #333c3e; padding-bottom:20px; margin-bottom:22px; }
 .standalone-header h1 { font-size:26px; font-weight:400; margin:0; line-height:1.4; }
 .standalone-header strong { font-weight:700; }
@@ -103,3 +104,6 @@ details button { margin:10px 13px; }
 #investigation-results pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:320px; overflow:auto; font-size:12px; }
 #investigation-results details { margin:10px 0; }
 .comparison-result { border-top:1px solid #333c3e; margin-top:18px; padding-top:8px; }
+
+@media (max-width:600px) { .coqui-background { width:100px; right:8px; bottom:10px; opacity:.025; } }
+@media print { .coqui-background { display:none; } }

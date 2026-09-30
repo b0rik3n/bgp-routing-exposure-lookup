@@ -195,7 +195,13 @@ def build(engine, text, dates, progress=lambda _: None):
         raise LookupError('Choose one observation date or two comparison dates.')
     if len(dates) == 2 and (any(not isinstance(d, str) for d in dates) or 'latest' in dates or dates[0] >= dates[1]):
         raise LookupError('Choose two historical dates in chronological order.')
-    snapshots = [capture_snapshot(engine, text, requested, progress) for requested in dates]
+    snapshots = []
+    for number, requested in enumerate(dates, 1):
+        def snapshot_progress(message):
+            progress(message)
+        snapshot_progress.report = lambda value: getattr(progress, 'report', lambda v: None)(
+            {**value, 'snapshot': number, 'snapshots': len(dates), 'date': requested})
+        snapshots.append(capture_snapshot(engine, text, requested, snapshot_progress))
     data = {'schemaVersion': SCHEMA, 'createdAt': datetime.now(timezone.utc).isoformat(),
             'inputs': [i['input'] for i in items], 'tool': tool_version(), 'snapshots': snapshots}
     progress('Packaging evidence and checking offline replay')

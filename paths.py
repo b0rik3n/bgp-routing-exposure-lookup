@@ -17,8 +17,8 @@ from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_ope
 from ripe_queue import PauseWork
 from lookup import BASE, Datasets, Links, LookupError, https_context, is_special, parse_import, parse_resource
 
-MAX_PATH_INPUTS = 20
-MAX_INVESTIGATION_INPUTS = 20
+MAX_PATH_INPUTS = 1000
+MAX_INVESTIGATION_INPUTS = MAX_PATH_INPUTS
 MAX_RESULT_BYTES = 32_000_000
 MAX_RIS_ROUTES = 50000
 MAX_EVIDENCE = 1000
@@ -234,6 +234,8 @@ class PathLookup:
             for item in items:
                 unique.setdefault(item.get('resource',item['input']),item)
             items = list(unique.values())
+        from batch_progress import BatchProgress
+        batch = BatchProgress(progress, len(items))
         halted = None
         result_bytes = 0
         if requested != "latest":
@@ -248,6 +250,7 @@ class PathLookup:
             results.append(result)
             self.raw_response = None
             url, relationships = None, {}
+            batch.start(item["input"])
             try:
                 if halted:
                     result.update(status="not_requested",error=halted)
@@ -301,6 +304,7 @@ class PathLookup:
                         halted = "Result size limit reached. Export completed results and query remaining targets separately."
                         amount = len(json.dumps(result).encode())
                     result_bytes += amount
+                batch.finish(result.get("status", "not_requested"))
                 if capture is not None:
                     capture.add(item, self.raw_response, url, result, relationships)
         return {"kind": "paths", "inputCount":original_count,"duplicatesRemoved":original_count-len(items),"incomplete":halted, "requestedDate": requested, "generatedAt": datetime.now(timezone.utc).isoformat(),

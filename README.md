@@ -54,7 +54,7 @@ agreements, physical connectivity, or the route taken by your own traffic.
 | Example | `AS63` or `129.55.110.9` | `129.55.110.9` or `129.55.0.0/24` |
 | Primary evidence | RIPE RIS BGP paths | CAIDA RouteViews prefix-to-AS snapshots |
 | Enrichment | CAIDA organization names and inferred AS relationships | CAIDA organization names |
-| Maximum import | 20 entries | 1,000 entries |
+| Maximum import | 1,000 entries | 1,000 entries |
 | Historical selection | Routing state at 12:00 UTC on the selected day | Latest available routing snapshot within the selected day |
 
 Choose **Observed BGP paths** to investigate observed external adjacencies and
@@ -292,8 +292,11 @@ or even an observed adjacent AS.
 All RIPE requests from the local server share one request gate across ordinary
 lookups, captures, comparisons, and browser tabs. It allows **one active request
 at a time**, with a **two-second pause after a response**, including retries.
-There is **no daily request cap**. The existing 20-entry observed-path/capture
-limit and 1,000-entry Origin Mapping limit are unchanged.
+There is **no daily request cap**. Observed paths, captures, comparisons, and Origin Mapping accept up to 1,000
+entries per submission. Large batches take longer: 1,000 uncached RIPE requests
+require about 33 minutes of pacing alone, plus response and processing time.
+Two-date comparisons can require twice as many requests. Existing result and
+evidence size limits still apply; a large capture may need smaller batches.
 
 The page shows requests attempted today (UTC). At **1,000 attempts**, an in-page
 notification advises registering regular high-volume use with RIPE; processing
@@ -347,7 +350,7 @@ measure accuracy or identify connections missed by public collectors.
 
 ### Capture and save an investigation
 
-1. Select **Observed BGP paths** and enter up to 20 ASNs, IPs, or CIDRs.
+1. Select **Observed BGP paths** and enter up to 1,000 ASNs, IPs, or CIDRs.
 2. Choose **Latest**, or **Historical** and a date above the lookup button.
 3. Expand **Save and compare investigations**.
 4. Select **Capture investigation**. This makes a new lookup using those inputs
@@ -355,8 +358,8 @@ measure accuracy or identify connections missed by public collectors.
 5. Review the snapshot, provenance, warnings, and per-input replay checks.
 6. Select **Export investigation ZIP** and keep the file on your computer.
 
-Archives expire with their jobs after one hour and are lost on restart. There
-is a 64 MB retained-archive budget; the oldest archive can be evicted sooner.
+Archives expire with their jobs after one hour and are lost on restart. The
+shared 128 MB result-and-archive budget can evict older finished jobs sooner.
 Export promptly. Failed or special-use inputs remain in the bundle with an
 explicit unavailable replay status; they are never reported as verified routes.
 
@@ -441,7 +444,7 @@ bundle, including derived enrichment. Queries, observer addresses, and analysis
 results are included in exported files.
 
 Limits: 16 MB encoded evidence per snapshot, 32 MB compressed ZIP, 48 MB total
-uncompressed members, one or two snapshots, and 20 inputs. Oversized captures
+uncompressed members, one or two snapshots, and 1,000 inputs. Oversized captures
 fail explicitly; narrow the query instead of interpreting partial evidence.
 The ZIP is a local saved investigation, not a managed archive or backup service.
 
@@ -647,13 +650,13 @@ capture every event during an interval.
 | Resource | Implemented limit/behavior |
 | --- | --- |
 | Import text / HTTP job body | 262,144 bytes / 524,288 bytes including JSON overhead |
-| Observed BGP paths / Origin Mapping batch | 20 / 1,000 entries |
+| Observed BGP paths / Origin Mapping batch | 1,000 / 1,000 entries |
 | RIS response per resource | 12,000,000 bytes and 50,000 routes |
 | Origin-neighbor combinations | At most 500 per observed-path input |
 | Retained path evidence | At most 1,000 path/prefix combinations per input, divided among neighbors |
 | Origin segments / overlapping routes | 5,000 segments per batch / 20,000 routes per input |
 | Job execution | One worker; up to three outstanding jobs including the running job |
-| Retained jobs | At most 40; active jobs retained; finished results expire after one hour; restart clears them |
+| Retained jobs | At most 40; active jobs retained; finished results expire after one hour or earlier under storage pressure; restart clears them |
 | Browser polling | About every 1.5 seconds for jobs; shared counter every five seconds |
 | RIS response cache | Up to eight responses; latest for five minutes, historical for one hour |
 | In-memory dataset maps | Up to two routing indexes and two organization maps |
@@ -671,6 +674,33 @@ CAIDA enrichment locally. Actual performance depends on input and upstream data.
 The cache contains public data, not saved user reports. Catalog files are separate
 from the compressed-file cap; the application does not have a hard 512 MB total
 memory/disk limit. One network-using process may own each cache directory at a time.
+
+## Progress, result retention, and connection protection
+
+Live jobs show the current target and completed, failed, special-use skipped, and
+remaining input counts. Comparisons show progress separately for each dated
+snapshot. These are input counts, not RIPE request counts. After cancellation,
+remaining includes inputs that were not requested. Failed captures do not produce
+an incomplete investigation ZIP.
+
+Results show a persistent completeness summary and per-input warnings for failed
+or unprocessed inputs, unavailable enrichment, partial coverage, and truncated
+path evidence. Completed means processing finished; it does not guarantee full
+Internet visibility. Observed advertisements are not measured traffic paths, and
+collector counts are not confidence scores or traffic shares.
+
+Finished jobs expire after one hour, or earlier when new work needs space.
+The server evicts the oldest finished jobs at the 40-job limit or the shared
+128 MB budget for serialized results plus investigation ZIPs. Queued and running
+jobs are protected. A result larger than that budget fails with a smaller-batch
+message. Download files you want to keep; downloaded files are not evicted.
+This budget does not cap temporary processing memory or total process memory.
+
+The server allows at most 32 simultaneous connections and closes excess ones.
+Connections have a 10-second initial idle timeout and a 15-second absolute
+header deadline. Job uploads have a 15-second idle timeout and 30-second total
+body deadline; investigation uploads use 30 and 60 seconds respectively.
+These deadlines do not limit background jobs; the browser polls separately.
 
 ## Privacy and security
 
@@ -772,8 +802,7 @@ instead of creating duplicate jobs.
 
 Use `"mode":"origins"` for Origin Mapping. The API defaults to `origins` when
 mode is omitted, unlike the browser's Observed BGP paths default. The date defaults
-to `latest`. The health response's `maxInputs: 1000` refers to Origin Mapping;
-Observed BGP paths is still limited to 20.
+to `latest`. The health response's `maxInputs: 1000` applies to both lookup modes.
 
 With a configured service token, all routes additionally require
 `Authorization: Bearer <service-token>`, including static assets and health checks.
@@ -848,7 +877,7 @@ remains a separate decision subject to the requirements in
 | Unknown relationship/name | Check warnings and enrichment dates; missing data does not prove no provider exists. |
 | `not_observed` | Review input, date, address family, and collector coverage; do not assume globally unreachable. |
 | Too many routes/response too large | Use narrower prefixes or smaller imports, not weaker safety limits. |
-| Busy / HTTP `429` | Let work finish; unexpired retained jobs can also fill the store. |
+| Busy / HTTP `429` | Let active work finish or cancel your queued job. |
 | Job/export unavailable | It expired, the service restarted, or the token is wrong. Rerun the lookup. |
 | Unauthorized after setting a token | The raw server now needs bearer authentication, including its UI. Use a trusted gateway/client. |
 | Private GitHub repo shows 404 | Sign in with repository access or use a supplied ZIP; local execution does not need GitHub access. |

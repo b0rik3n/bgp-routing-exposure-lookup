@@ -86,6 +86,20 @@ class InvestigationHTTPTests(unittest.TestCase):
             self.assertEqual(status,202)
             self.assertEqual(create.call_args.args[0].splitlines(),['AS63','AS64'])
 
+    def test_thousand_entry_api_limits(self):
+        text = '\n'.join(f'AS{i}' for i in range(1, 1001))
+        for mode in ('paths', 'investigation'):
+            with self.subTest(mode=mode), patch.object(self.server.jobs, 'create', return_value={'id':'x','token':'y'}) as create:
+                body = {'text':text, 'mode':mode, 'date':'2026-08-01'}
+                status, _ = self.request('POST', '/api/jobs', json.dumps(body), {'Content-Type':'application/json'})
+                self.assertEqual(status, 202)
+                self.assertEqual(len(create.call_args.args[0].splitlines()), 1000)
+                create.reset_mock()
+                body['text'] += '\nAS1001'
+                status, _ = self.request('POST', '/api/jobs', json.dumps(body), {'Content-Type':'application/json'})
+                self.assertEqual(status, 400)
+                create.assert_not_called()
+
     def test_service_token_applies_to_import(self):
         self.server.service_token='test-token'
         try:

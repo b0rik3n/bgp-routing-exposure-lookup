@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from lookup import Datasets, LookupError, parse_import
-from paths import PathLookup, normalize_path, parse_path_resource, parse_relationships, select_routes, summarize_routes, path_csv_export
+from paths import MAX_PATH_INPUTS, PathLookup, normalize_path, parse_path_resource, parse_relationships, select_routes, summarize_routes, path_csv_export
 
 
 def route(path, prefix="129.55.0.0/16", peer="00-8.8.8.8"):
@@ -22,7 +22,16 @@ class PathTests(unittest.TestCase):
             with self.assertRaises(LookupError):
                 parse_path_resource(text)
         with self.assertRaises(LookupError):
-            parse_import("AS63\n"*21, parse_path_resource, 20)
+            parse_import("AS63\n"*1001, parse_path_resource, MAX_PATH_INPUTS)
+
+    def test_thousand_unique_targets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            engine = PathLookup(Datasets(Path(directory)))
+            with patch.object(engine, 'ris', return_value=({'bgp_state': [], 'timestamp': '2026-08-01T12:00:00'}, 'https://stat.ripe.net/data/bgp-state/data.json')) as ris:
+                result = engine.lookup('\n'.join(f'AS{i}' for i in range(1, 1001)), 'latest')
+            self.assertEqual(len(result['results']), 1000)
+            self.assertEqual(ris.call_count, 1000)
+            self.assertTrue(all(r['status'] == 'not_observed' for r in result['results']))
 
     def test_prepend_only_collapses_consecutive_repeats(self):
         self.assertEqual(normalize_path([174, 174, 13789, 63, 63]), [174, 13789, 63])

@@ -39,6 +39,30 @@ class InvestigationTests(unittest.TestCase):
         with zipfile.ZipFile(io.BytesIO(blob)) as z:
             return json.loads(z.read('investigation.json'))
 
+    def test_thousand_target_comparison_roundtrip(self):
+        def ris(item, requested):
+            state = {'timestamp': requested+'T12:00:00', 'bgp_state': []}
+            self.engine.raw_response = json.dumps({'status': 'ok', 'data': state}).encode()
+            return state, 'https://stat.ripe.net/data/bgp-state/data.json'
+        text = '\n'.join(f'AS{i}' for i in range(1, 1001))
+        updates = []
+        def progress(message): pass
+        progress.report = updates.append
+        with patch.object(self.engine, 'ris', side_effect=ris) as fetch:
+            view, blob = build(self.engine, text, ['2026-08-01', '2026-08-02'], progress)
+        self.assertEqual(updates[-1]['snapshot'], 2)
+        self.assertEqual(updates[-1]['processed'], 1000)
+        self.assertEqual(updates[-1]['remaining'], 0)
+        self.assertEqual({v['date'] for v in updates}, {'2026-08-01','2026-08-02'})
+        self.assertEqual(fetch.call_count, 2000)
+        opened = unpack(blob)
+        self.assertEqual(len(opened['inputs']), 1000)
+        self.assertEqual(len(opened['comparison']), 1000)
+        self.assertEqual(opened['comparisonReplay'], 'match')
+        self.assertTrue(all(c['status'] == 'match' for checks in opened['replay'] for c in checks))
+        with self.assertRaises(LookupError):
+            build(self.engine, text+'\nAS1001', ['2026-08-01'])
+
     def test_exact_raw_response_and_offline_replay(self):
         view, blob = self.capture({'2026-08-01':[route([174,13789,63])]})
         raw = base64.b64decode(self.data(blob)['snapshots'][0]['evidence'][0]['risBase64'])
