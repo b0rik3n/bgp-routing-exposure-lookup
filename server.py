@@ -2,6 +2,7 @@
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 import csv
 from datetime import date, datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -15,6 +16,7 @@ from urllib.parse import urlparse
 
 from lookup import Datasets, LookupError, MAX_TEXT, csv_export, parse_import, run_lookup
 from investigations import MAX_BUNDLE, build as build_investigation, unpack as open_investigation
+from ripe_queue import RipeGate, PauseWork, CancelWork, acquire_owner
 from paths import MAX_PATH_INPUTS, PathLookup, parse_path_resource, path_csv_export
 
 ROOT = Path(__file__).parent
@@ -23,9 +25,9 @@ ASSETS = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascri
 
 
 class JobStore:
-    def __init__(self, datasets):
+    def __init__(self, datasets, gate=None):
         self.datasets = datasets
-        self.paths = PathLookup(datasets)
+        self.paths = PathLookup(datasets, gate)
         self.jobs = {}
         self.lock = threading.Lock()
         self.capacity = threading.BoundedSemaphore(3)
@@ -44,20 +46,39 @@ class JobStore:
 
     def purge(self):
         with self.lock:
-            self.jobs = {key: job for key, job in self.jobs.items() if time.time() - job["created"] < 3600}
+            self.jobs = {key: job for key, job in self.jobs.items() if (job.get("state") in ("queued","running") or time.time() - job.get("finished",job["created"]) < 3600)}
+
+    def cancel(self, job_id, token):
+        with self.lock:
+            job = self.jobs.get(job_id)
+            if not job or not secrets.compare_digest(job['token'],token):
+                return False
+            if job['state'] in ('queued','running'):
+                job['cancelRequested'] = True
+                job['message'] = 'Cancelling; an in-flight request may finish.'
+            return True
 
     def run(self, job_id, text, requested, mode, comparison_date=None):
+        def checkpoint():
+            with self.lock:
+                if self.jobs.get(job_id, {}).get('cancelRequested'):
+                    raise CancelWork('Cancelled by user.')
         def progress(message):
+            checkpoint()
             with self.lock:
                 if job_id in self.jobs:
                     self.jobs[job_id].update(state="running", message=message)
         try:
+            checkpoint()
+            self.datasets.checkpoint = checkpoint
             bundle = None
-            if mode == "investigation":
-                dates = [requested, comparison_date] if comparison_date else [requested]
-                result, bundle = build_investigation(self.paths, text, dates, progress)
-            else:
-                result = self.paths.lookup(text, requested, progress) if mode == "paths" else run_lookup(text, requested, self.datasets, progress)
+            context = self.paths.gate.context(checkpoint, progress) if self.paths.gate else nullcontext()
+            with context:
+                if mode == "investigation":
+                    dates = [requested, comparison_date] if comparison_date else [requested]
+                    result, bundle = build_investigation(self.paths, text, dates, progress)
+                else:
+                    result = self.paths.lookup(text, requested, progress) if mode == "paths" else run_lookup(text, requested, self.datasets, progress)
             with self.lock:
                 if job_id in self.jobs:
                     if bundle:
@@ -68,29 +89,38 @@ class JobStore:
                                 break
                             budget -= len(old.pop("bundle", b""))
                         self.jobs[job_id]["bundle"] = bundle
-                    self.jobs[job_id].update(state="complete", message="Complete", result=result)
-        except (LookupError, csv.Error, ValueError) as exc:
+                    cancelled = self.jobs[job_id].get('cancelRequested',False)
+                    self.jobs[job_id].update(state="cancelled" if cancelled else "complete", message="Cancelled; completed results are available." if cancelled else "Complete", result=result, finished=time.time())
+        except CancelWork:
             with self.lock:
                 if job_id in self.jobs:
-                    self.jobs[job_id].update(state="failed", message=str(exc) if isinstance(exc, LookupError) else "Lookup could not complete. Check the input and dataset availability.")
+                    self.jobs[job_id].update(state='cancelled',message='Cancelled. No complete result or investigation bundle was produced.')
+        except (PauseWork, LookupError, csv.Error, ValueError) as exc:
+            with self.lock:
+                if job_id in self.jobs:
+                    self.jobs[job_id].update(state="failed", message=str(exc) if isinstance(exc, (LookupError, PauseWork)) else "Lookup could not complete. Check the input and dataset availability.")
         except Exception:
             with self.lock:
                 if job_id in self.jobs:
                     self.jobs[job_id].update(state="failed", message="Lookup service failed. Retry or check the local service.")
         finally:
+            self.datasets.checkpoint = lambda: None
+            with self.lock:
+                if job_id in self.jobs:
+                    self.jobs[job_id].setdefault("finished",time.time())
             self.capacity.release()
 
     def read(self, job_id, token):
         with self.lock:
             job = self.jobs.get(job_id)
-            if not job or time.time() - job["created"] >= 3600 or not secrets.compare_digest(job["token"], token):
+            if not job or (job.get("state") not in ("queued","running") and time.time() - job.get("finished",job["created"]) >= 3600) or not secrets.compare_digest(job["token"], token):
                 return None
-            return {key: value for key, value in job.items() if key not in ("token", "created", "bundle")}
+            return {key: value for key, value in job.items() if key not in ("token", "created", "bundle", "finished")}
 
     def bundle(self, job_id, token):
         with self.lock:
             job = self.jobs.get(job_id)
-            if not job or time.time() - job["created"] >= 3600 or not secrets.compare_digest(job["token"], token):
+            if not job or (job.get("state") not in ("queued","running") and time.time() - job.get("finished",job["created"]) >= 3600) or not secrets.compare_digest(job["token"], token):
                 return None
             return job.get("bundle")
 
@@ -148,6 +178,8 @@ class Handler(BaseHTTPRequestHandler):
         if path in ASSETS:
             filename, kind = ASSETS[path]
             return self.reply((ROOT / "web" / filename).read_bytes(), content_type=kind)
+        if path == "/api/requests":
+            return self.reply(self.server.jobs.paths.gate.status())
         if path == "/api/health":
             return self.reply({"status": "ready", "maxInputs": 1000})
         parts = path.strip("/").split("/")
@@ -157,12 +189,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply({"error": "Import not found or expired"}, 404)
             if len(parts) == 3:
                 return self.reply(job)
-            if parts[3] == "bundle" and job["state"] == "complete":
+            if parts[3] == "bundle" and job["state"] in ("complete","cancelled") and "result" in job:
                 bundle = self.server.jobs.bundle(parts[2], self.headers.get("X-Job-Token", ""))
                 if bundle is None:
                     return self.reply({"error": "Bundle unavailable or expired. Capture the investigation again."}, 404)
                 return self.reply(bundle, content_type="application/zip", filename="routing-investigation.zip")
-            if parts[3] == "export" and job["state"] == "complete" and job["result"].get("kind") != "investigation":
+            if parts[3] == "export" and job["state"] in ("complete","cancelled") and "result" in job and job["result"].get("kind") != "investigation":
                 exporter = path_csv_export if job["result"].get("kind") == "paths" else csv_export
                 return self.reply(exporter(job["result"]), content_type="text/csv", filename="network-lookup.csv")
         self.reply({"error": "Not found"}, 404)
@@ -170,6 +202,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.allowed():
             return
+        parts = self.path.strip('/').split('/')
+        if len(parts)==4 and parts[:2]==['api','jobs'] and parts[3]=='cancel':
+            if not self.server.jobs.cancel(parts[2], self.headers.get('X-Job-Token','')):
+                return self.reply({'error':'Job not found'},404)
+            return self.reply({'status':'Cancellation requested'})
         if self.path in ("/api/investigations/open", "/api/investigations/replay"):
             return self.import_investigation()
         if self.path != "/api/jobs":
@@ -201,6 +238,16 @@ class Handler(BaseHTTPRequestHandler):
                     raise LookupError("Choose two historical dates for comparison.")
                 if not date.fromisoformat(requested) < date.fromisoformat(comparison_date) <= datetime.now(timezone.utc).date():
                     raise LookupError("Comparison dates must be chronological and not in the future.")
+            if mode in ("paths","investigation"):
+                import io
+                unique = {}
+                for item in parse_import(text, parse_path_resource, MAX_PATH_INPUTS):
+                    unique.setdefault(item.get('resource',item['input']),item)
+                output = io.StringIO()
+                writer = csv.writer(output)
+                for item in unique.values():
+                    writer.writerow([item['input']])
+                text = output.getvalue()
             job = self.server.jobs.create(text, requested, mode, comparison_date)
             return self.reply(job, 202)
         except LookupError as exc:
@@ -235,13 +282,19 @@ def main():
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--cache", type=Path, default=ROOT / "data")
+    parser.add_argument('--ripe-interval', type=float, default=2.0, help='Seconds between RIPE requests (minimum 2)')
     args = parser.parse_args()
     service_token = os.environ.get("BGP_LOOKUP_SERVICE_TOKEN", "")
     if args.host != "127.0.0.1" and len(service_token) < 32:
         parser.error("A service token of at least 32 characters is required for non-loopback binding.")
     server = LookupHTTPServer((args.host, args.port), Handler)
     server.service_token = service_token
-    server.jobs = JobStore(Datasets(args.cache))
+    try:
+        owner = acquire_owner(args.cache)
+        gate = RipeGate(args.cache / 'private', args.ripe_interval)
+    except ValueError as exc:
+        parser.error(str(exc))
+    server.jobs = JobStore(Datasets(args.cache), gate)
     print(f"BGP Routing Exposure Lookup: http://{args.host}:{args.port}", flush=True)
     try:
         server.serve_forever()

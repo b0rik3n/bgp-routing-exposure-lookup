@@ -14,9 +14,12 @@ from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
+from ripe_queue import PauseWork
 from lookup import BASE, Datasets, Links, LookupError, https_context, is_special, parse_import, parse_resource
 
 MAX_PATH_INPUTS = 20
+MAX_INVESTIGATION_INPUTS = 20
+MAX_RESULT_BYTES = 32_000_000
 MAX_RIS_ROUTES = 50000
 MAX_EVIDENCE = 1000
 REL_LABELS = {"provider": "Transit provider (inferred)", "peer": "Peer (inferred)",
@@ -161,35 +164,45 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 class PathLookup:
-    def __init__(self, datasets):
+    def __init__(self, datasets, gate=None):
         self.datasets = datasets
+        self.gate = gate
         self.cache = OrderedDict()
         self.raw_response = None
 
-    def ris(self, item, requested):
+    @staticmethod
+    def ris_url(item, requested):
         params = {"resource": item["resource"]}
         if requested != "latest":
             params["timestamp"] = requested + "T12:00:00"
-        url = "https://stat.ripe.net/data/bgp-state/data.json?" + urlencode(params)
+        return "https://stat.ripe.net/data/bgp-state/data.json?" + urlencode(params)
+
+    def ris(self, item, requested):
+        url = self.ris_url(item, requested)
         cached = self.cache.get(url)
         if cached and time.time() - cached[0] < (300 if requested == "latest" else 3600):
             self.raw_response = cached[2]
             return cached[1], url
         try:
             req = Request(url, headers={"User-Agent": "BGPRoutingExposureLookup/0.2", "Accept": "application/json"})
-            with build_opener(NoRedirect(), HTTPSHandler(context=https_context())).open(req, timeout=45) as response:
-                raw = response.read(12_000_001)
-            if len(raw) > 12_000_000:
-                raise LookupError("RIS response is too large. Query a narrower prefix.")
-            payload = json.loads(raw)
-            if payload.get("status") != "ok" or not isinstance(payload.get("data"), dict):
-                raise LookupError("RIS could not provide routing state for this resource and time.")
-            state = payload["data"]
-            if not isinstance(state.get("timestamp"), str):
-                raise LookupError("RIS did not provide an observation timestamp.")
-            observed = datetime.fromisoformat(state["timestamp"].replace("Z", "+00:00"))
-            if requested != "latest" and observed.date().isoformat() != requested:
-                raise LookupError("RIS returned a different observation date; this result was not used.")
+            def fetch():
+                with build_opener(NoRedirect(), HTTPSHandler(context=https_context())).open(req, timeout=45) as response:
+                    return response.read(12_000_001)
+            def validate(raw):
+                if len(raw) > 12_000_000:
+                    raise LookupError("RIS response is too large. Query a narrower prefix.")
+                payload = json.loads(raw)
+                if payload.get("status") != "ok" or not isinstance(payload.get("data"), dict):
+                    raise LookupError("RIS could not provide routing state for this resource and time.")
+                state = payload["data"]
+                if not isinstance(state.get("timestamp"), str):
+                    raise LookupError("RIS did not provide an observation timestamp.")
+                observed = datetime.fromisoformat(state["timestamp"].replace("Z", "+00:00"))
+                if requested != "latest" and observed.date().isoformat() != requested:
+                    raise LookupError("RIS returned a different observation date; this result was not used.")
+                return state
+            raw = self.gate.fetch(url, requested, fetch, validate) if self.gate else fetch()
+            state = validate(raw)
             self.raw_response = raw
             self.cache[url] = (time.time(), state, raw)
             self.cache.move_to_end(url)
@@ -214,7 +227,15 @@ class PathLookup:
         return relationships, {"url": base + name, "sha256": hashlib.sha256(source_path.read_bytes()).hexdigest(), "snapshotDate": datetime.strptime(name[:8], "%Y%m%d").date().isoformat()}
 
     def lookup(self, text, requested, progress=lambda _: None, capture=None):
-        items = parse_import(text, parse_path_resource, MAX_PATH_INPUTS)
+        items = parse_import(text, parse_path_resource, MAX_INVESTIGATION_INPUTS if capture else MAX_PATH_INPUTS)
+        original_count = len(items)
+        if capture is None:
+            unique = {}
+            for item in items:
+                unique.setdefault(item.get('resource',item['input']),item)
+            items = list(unique.values())
+        halted = None
+        result_bytes = 0
         if requested != "latest":
             try:
                 if not date(2005, 5, 9) <= date.fromisoformat(requested) <= datetime.now(timezone.utc).date():
@@ -228,6 +249,9 @@ class PathLookup:
             self.raw_response = None
             url, relationships = None, {}
             try:
+                if halted:
+                    result.update(status="not_requested",error=halted)
+                    continue
                 if "error" in item:
                     result.update(status="invalid", error=item["error"])
                     continue
@@ -253,6 +277,7 @@ class PathLookup:
                     except (LookupError, OSError, EOFError, ValueError):
                         organizations = {}
                         result["warnings"].append("Organization names are unavailable; ASNs are shown.")
+                    progress("Resolving inferred relationships")
                     try:
                         relationships, provenance = self.relationships(observed_date, {row["path"][-1] for row in routes})
                         result["relationships"] = provenance
@@ -261,12 +286,24 @@ class PathLookup:
                         result["warnings"].append("Relationship data is unavailable; neighbors are not classified as transit providers.")
                     result["groups"], result["asns"] = summarize_routes(routes, organizations, relationships)
                     result["status"] = "mapped"
+                except PauseWork as exc:
+                    if capture is not None:
+                        raise
+                    halted = str(exc)
+                    result.update(status="not_requested",error=halted)
                 except LookupError as exc:
                     result.update(status="error", error=str(exc))
             finally:
+                if capture is None:
+                    amount = len(json.dumps(result).encode())
+                    if result_bytes + amount > MAX_RESULT_BYTES and result.get('groups'):
+                        result.update(status="error",groups=[],asns={},error="Result size limit reached. Query this target separately.")
+                        halted = "Result size limit reached. Export completed results and query remaining targets separately."
+                        amount = len(json.dumps(result).encode())
+                    result_bytes += amount
                 if capture is not None:
                     capture.add(item, self.raw_response, url, result, relationships)
-        return {"kind": "paths", "requestedDate": requested, "generatedAt": datetime.now(timezone.utc).isoformat(),
+        return {"kind": "paths", "inputCount":original_count,"duplicatesRemoved":original_count-len(items),"incomplete":halted, "requestedDate": requested, "generatedAt": datetime.now(timezone.utc).isoformat(),
                 "meaning": "Observed adjacent ASes and separately inferred relationships. Potential ingress is an interpretation, not confirmation of traffic flow, a reachable entry point, a security perimeter, or a vulnerability; paths are not a measurement from your network.", "results": results}
 
 

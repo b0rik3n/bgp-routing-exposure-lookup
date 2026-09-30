@@ -203,6 +203,7 @@ class Datasets:
         self.org_hashes = {}
 
     def fetch(self, url: str, max_bytes=50_000_000) -> bytes:
+        getattr(self, "checkpoint", lambda: None)()
         validate_dataset_url(url)
         request = Request(url, headers={"User-Agent": "BGPRoutingExposureLookup/0.1", "Accept": "*/*"})
         try:
@@ -378,11 +379,18 @@ def run_lookup(text: str, requested: str, datasets: Datasets, progress=lambda _:
             families[version] = index, orgs, routing, organizations
         except LookupError as exc:
             family_errors[version] = str(exc)
+    from ripe_queue import CancelWork
+    halted = None
     results = []
     remaining = MAX_SEGMENTS
     for i, item in enumerate(inputs):
-        progress(f"Resolving entry {i + 1} of {len(inputs)}")
-        if "error" in item:
+        try:
+            progress(f"Resolving entry {i + 1} of {len(inputs)}")
+        except CancelWork as exc:
+            halted = str(exc)
+        if halted:
+            result = {"input":item["input"],"status":"not_requested","error":halted,"segments":[]}
+        elif "error" in item:
             result = {"input": item["input"], "status": "invalid", "error": item["error"], "segments": []}
         elif is_special(item):
             result = {"input": item["input"], "normalized": item["normalized"], "status": "special_use",
@@ -398,7 +406,7 @@ def run_lookup(text: str, requested: str, datasets: Datasets, progress=lambda _:
             except LookupError as exc:
                 result = {"input": item["input"], "status": "error", "error": str(exc), "segments": []}
         results.append(result)
-    return {"requestedDate": requested, "generatedAt": datetime.now(timezone.utc).isoformat(),
+    return {"incomplete":halted,"requestedDate": requested, "generatedAt": datetime.now(timezone.utc).isoformat(),
             "source": "CAIDA RouteViews prefix-to-AS and AS Organizations datasets",
             "meaning": "Origin network organization; not proof of retail ISP, upstream transit, physical location, or ownership.",
             "results": results}
@@ -429,19 +437,29 @@ def main():
     parser.add_argument("--format", choices=["json", "csv"], default="json")
     parser.add_argument("--paths", action="store_true", help="Find observed BGP paths for IPs, CIDRs, or ASNs")
     parser.add_argument("--cache", type=Path, default=Path(__file__).parent / "data")
+    parser.add_argument("--ripe-interval", type=float, default=2.0)
     args = parser.parse_args()
     try:
         text = args.input.read_text(encoding="utf-8-sig") if args.input else "\n".join(args.resources)
         progress = lambda message: print(message, file=sys.stderr)
         if args.paths:
             from paths import PathLookup, path_csv_export
-            payload = PathLookup(Datasets(args.cache)).lookup(text, args.date, progress)
+            from ripe_queue import RipeGate, PauseWork, acquire_owner
+            owner = acquire_owner(args.cache)
+            gate = RipeGate(args.cache / "private", args.ripe_interval)
+            try:
+                with gate.context(lambda: None, progress):
+                    payload = PathLookup(Datasets(args.cache), gate).lookup(text, args.date, progress)
+            except PauseWork as exc:
+                raise ValueError(str(exc)) from exc
+            finally:
+                owner.close()
             exporter = path_csv_export
         else:
             payload = run_lookup(text, args.date, Datasets(args.cache), progress)
             exporter = csv_export
         print(exporter(payload) if args.format == "csv" else json.dumps(payload, indent=2))
-        return 1 if any(result["status"] in ("invalid", "error") for result in payload["results"]) else 0
+        return 1 if any(result["status"] in ("invalid", "error", "not_requested") for result in payload["results"]) else 0
     except (ValueError, OSError, csv.Error) as exc:
         print(str(exc), file=sys.stderr)
         return 1

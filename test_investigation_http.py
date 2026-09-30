@@ -10,6 +10,7 @@ from lookup import Datasets
 from investigations import build
 from paths import PathLookup
 from server import Handler, JobStore, LookupHTTPServer
+from ripe_queue import RipeGate
 
 
 class InvestigationHTTPTests(unittest.TestCase):
@@ -19,7 +20,7 @@ class InvestigationHTTPTests(unittest.TestCase):
         cls.datasets = Datasets(Path(cls.tmp.name))
         cls.server = LookupHTTPServer(('127.0.0.1',0), Handler)
         cls.server.service_token = ''
-        cls.server.jobs = JobStore(cls.datasets)
+        cls.server.jobs = JobStore(cls.datasets, RipeGate(Path(cls.tmp.name)/"private"))
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
         _, cls.bundle = build(PathLookup(cls.datasets),'10.0.0.1',['latest'])
@@ -60,6 +61,30 @@ class InvestigationHTTPTests(unittest.TestCase):
     def test_malformed_zip_rejected(self):
         status,_=self.request('POST','/api/investigations/open',b'not a zip',{'Content-Type':'application/zip'})
         self.assertEqual(status,400)
+
+    def test_cancel_requires_job_token_and_origin(self):
+        import time
+        self.server.jobs.jobs['cancel-fixture']={'created':time.time(),'state':'running','token':'secret'}
+        path='/api/jobs/cancel-fixture/cancel'
+        self.assertEqual(self.request('POST',path)[0],404)
+        self.assertEqual(self.request('POST',path,headers={'X-Job-Token':'secret','Origin':'https://example.com'})[0],403)
+        self.assertEqual(self.request('POST',path,headers={'X-Job-Token':'secret'})[0],200)
+        self.assertTrue(self.server.jobs.jobs['cancel-fixture']['cancelRequested'])
+        del self.server.jobs.jobs['cancel-fixture']
+
+    def test_request_notice_endpoint_has_no_cap(self):
+        status,body=self.request('GET','/api/requests')
+        self.assertEqual(status,200)
+        value=json.loads(body)
+        self.assertEqual(value['noticeThreshold'],1000)
+        self.assertNotIn('dailyBudget',value)
+        self.assertEqual(self.request('GET','/api/requests',headers={'Origin':'https://example.com'})[0],403)
+
+    def test_jobs_deduplicate_normalized_targets(self):
+        with patch.object(self.server.jobs,'create',return_value={'id':'x','token':'y'}) as create:
+            status,_=self.request('POST','/api/jobs',json.dumps({'text':'AS63\nas00063\nAS64','mode':'paths'}),{'Content-Type':'application/json'})
+            self.assertEqual(status,202)
+            self.assertEqual(create.call_args.args[0].splitlines(),['AS63','AS64'])
 
     def test_service_token_applies_to_import(self):
         self.server.service_token='test-token'

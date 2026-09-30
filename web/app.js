@@ -1,6 +1,6 @@
 (() => {
   const assets = new URL(".", document.currentScript.src);
-  const labels = {mapped: "Mapped", partial: "Partial coverage", multiple_networks: "Multiple networks", ambiguous: "Review origins", as_set: "AS set", multiple_origins: "Multiple origins", not_observed: "Not observed", special_use: "Special use", invalid: "Invalid input", error: "Lookup failed"};
+  const labels = {mapped: "Mapped", partial: "Partial coverage", multiple_networks: "Multiple networks", ambiguous: "Review origins", as_set: "AS set", multiple_origins: "Multiple origins", not_observed: "Not observed", not_requested: "Not requested", special_use: "Special use", invalid: "Invalid input", error: "Lookup failed"};
   const icon = (name) => `<svg aria-hidden="true"><use href="${new URL("icons.svg", assets)}#${name}"></use></svg>`;
   class NetworkLookup extends HTMLElement {
     connectedCallback() {
@@ -18,7 +18,10 @@
           <div class="comparison-dates"><label>Earlier date (12:00 UTC)<input id="compare-before" type="date" min="2005-05-09"></label><label>Later date (12:00 UTC)<input id="compare-after" type="date" min="2005-05-09"></label><button type="button" id="compare-dates">Compare dates</button></div>
         </details>
         <section id="investigation-results" hidden aria-label="Saved investigation"><div class="result-head"><h2>Investigation</h2><div class="toolbar"><button id="bundle-export" type="button">Export investigation ZIP</button><button id="replay-investigation" type="button">Replay saved evidence</button><button id="comparison-export" type="button">Export comparison JSON</button></div></div><div id="investigation-content"></div><label>Inspect snapshot <select id="snapshot-select"></select></label></section>
+        <p id="request-count" class="small muted" role="status"></p>
+        <p id="request-notice" class="warning" role="alert" hidden></p>
         <div class="notice" id="notice"></div>
+        <button id="cancel-job" type="button" hidden>Cancel lookup</button>
         <div id="status" class="status" role="status" aria-live="polite">Ready</div>
         <section id="results" hidden><div class="summary"><div class="metric"><strong id="total">0</strong><span>Imported</span></div><div class="metric mapped"><strong id="mapped">0</strong><span>Mapped</span></div><div class="metric review"><strong id="review">0</strong><span>Review</span></div><div class="metric"><strong id="unmapped">0</strong><span>Unmapped</span></div></div>
         <div class="result-head"><h2>Network attribution</h2><div class="toolbar"><input id="search" type="search" placeholder="Filter results" aria-label="Filter results"><select id="filter" aria-label="Result status"><option value="all">All results</option><option value="mapped">Mapped</option><option value="review">Needs review</option><option value="unmapped">Unmapped</option></select><button id="csv" class="icon" title="Export CSV" aria-label="Export CSV">${icon("download")}</button><button id="json" title="Export JSON">JSON</button></div></div>
@@ -39,6 +42,8 @@
       this.el("replay-investigation").onclick=()=>this.replayInvestigation();
       this.el("comparison-export").onclick=()=>this.download(JSON.stringify({createdAt:this.investigation.createdAt,tool:this.investigation.tool,coverageMeaning:this.investigation.coverageMeaning,comparison:this.investigation.comparison},null,2),"application/json","routing-comparison.json");
       this.el("snapshot-select").onchange=()=>this.showSnapshot();
+      this.el("cancel-job").onclick=()=>this.cancelLookup();
+      this.refreshRequests();this.requestTimer=setInterval(()=>this.refreshRequests(),5000);
       this.el("paths-tab").onclick=()=>this.setView("paths");
       this.el("origins-tab").onclick=()=>this.setView("origins");
       ["paths-tab","origins-tab"].forEach(id=>this.el(id).onkeydown=(event)=>{
@@ -68,7 +73,7 @@
       this.setView("paths");
       this.el("resources").value="AS63";
     }
-    disconnectedCallback() { clearTimeout(this.timer); this.controller?.abort(); }
+    disconnectedCallback() { clearInterval(this.requestTimer); clearTimeout(this.timer); this.controller?.abort(); }
     el(id) { return this.root.getElementById(id); }
     setView(view) {
       this.view=view;
@@ -100,6 +105,7 @@
       this.controller?.abort();
       clearTimeout(this.timer);
       this.controller = new AbortController();
+      this.job=null;this.el("cancel-job").hidden=true;
       this.payload = null;
       this.investigation=null;this.bundleBlob=null;
       this.el("investigation-results").hidden=true;
@@ -119,11 +125,33 @@
           if(!date||!comparisonDate||date>=comparisonDate) throw new Error("Choose an earlier and a later historical date.");
         }
         this.job = await this.request("/jobs", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({text,date,mode:researchMode?"investigation":this.view,comparisonDate})});
+        this.el("cancel-job").hidden=false;this.el("cancel-job").disabled=false;
         this.started = Date.now();
         await this.poll();
       } catch(error) { this.status(error.message, true); this.setBusy(false); }
     }
+    async refreshRequests() {
+      try {
+        const response=await fetch(this.getAttribute("api-base")+"/requests",{cache:"no-store"});
+        if(!response.ok)throw new Error("Counter unavailable");
+        const info=await response.json();
+        this.el("request-count").textContent=`RIPE requests today (UTC): ${info.usedToday.toLocaleString()} · ${info.intervalSeconds}s pause · one at a time · no daily cap`;
+        const notice=this.el("request-notice");notice.hidden=!info.registrationNotice;
+        if(info.registrationNotice && this.noticeDay!==info.day) {
+          this.noticeDay=info.day;
+          notice.replaceChildren(document.createTextNode("1,000 RIPE requests reached today. Lookups will continue. RIPE asks you to register if you regularly exceed 1,000 requests/day. "));
+          const link=document.createElement("a");link.textContent="RIPE usage guidance";link.href="https://data.stat.ripe.net/docs/data-api/ripestat-data-api#rules-of-usage";link.target="_blank";link.rel="noreferrer";notice.append(link);
+        }
+      } catch {this.el("request-count").textContent="RIPE request counter unavailable.";}
+    }
+    async cancelLookup() {
+      if(!this.job)return;
+      this.el("cancel-job").disabled=true;
+      try {await this.request(`/jobs/${this.job.id}/cancel`,{method:"POST",headers:{"X-Job-Token":this.job.token}});this.status("Cancelling. An in-flight request may finish; completed results will remain available.");}
+      catch(error){this.status(error.message,true);this.el("cancel-job").disabled=false;}
+    }
     setBusy(busy) {
+      if(!busy)this.el("cancel-job").hidden=true;
       ["resolve","import","example","resources","date","paths-tab","origins-tab","capture","compare-dates","compare-before","compare-after","open-investigation","replay-investigation","bundle-export","comparison-export","snapshot-select"].forEach(id=>this.el(id).disabled=busy);
       this.root.querySelectorAll('[name="mode"]').forEach(input=>input.disabled=busy);
     }
@@ -131,18 +159,18 @@
       try {
         const job = await this.request(`/jobs/${this.job.id}`, {headers:{"X-Job-Token":this.job.token}});
         if (job.state === "failed") throw new Error(job.message);
-        if (job.state === "complete") {
+        if (job.state === "cancelled" && !job.result) {this.status(job.message);this.setBusy(false);return;}
+        if (job.state === "complete" || job.state === "cancelled") {
           if(job.result.kind==="investigation") {
             this.investigation=job.result;this.renderInvestigation();
-            this.status("Investigation captured. Export the ZIP to retain its evidence.");this.setBusy(false);return;
+            this.status(job.state==="cancelled"?"Cancellation arrived after the investigation finished; the complete ZIP is available.":"Investigation captured. Export the ZIP to retain its evidence.");this.setBusy(false);return;
           }
           this.payload=job.result;
           if(this.payload.kind==="paths") this.renderPaths(); else this.render();
-          this.status("Lookup complete");
+          this.status(job.state==="cancelled"?"Cancelled. Export any completed results before leaving.":this.payload.incomplete?`Partial results: ${this.payload.incomplete}`:"Lookup complete");
           this.setBusy(false);
           return;
         }
-        if (Date.now()-this.started > 15*60*1000) throw new Error("Lookup is taking too long. Retry after the source recovers.");
         this.status(job.message,false,true);
         this.timer=setTimeout(() => this.poll(),1500);
       } catch(error) { this.status(error.message,true); this.setBusy(false); }
@@ -256,7 +284,16 @@
               const end=Math.min(shown+20,neighbor.paths.length);
               for(const path of neighbor.paths.slice(shown,end)) {
                 const record=node("div",undefined,"path-record");record.append(node("div",`${path.prefix} · ${path.peerCount} collector peers · ${path.collectors.join(", ")}`,"small muted"));
-                const chain=node("div",undefined,"as-path");path.asns.forEach((asn,index)=>{if(index)chain.append(node("span","→","muted"));const hop=node("span",`AS${asn}`,asn===group.origin?"origin-hop":"");hop.title=result.asns[String(asn)]?.name||"Organization not found";chain.append(hop);});record.append(chain);list.append(record);
+                const chain=node("div",undefined,"as-path");
+                path.asns.forEach((asn,index)=>{
+                  if(index)chain.append(node("span","→","muted"));
+                  const info=result.asns[String(asn)]||{};
+                  const names=[...new Set([info.asName,info.name].filter(Boolean))];
+                  const label=names.length?names.join(" · "):"Name unavailable";
+                  const country=info.country?`, ${info.country}`:"";
+                  chain.append(node("span",`AS${asn} — ${label}${country}`,`as-hop${asn===group.origin?" origin-hop":""}`));
+                });
+                record.append(chain);list.append(record);
               }
               shown=end;more.hidden=shown>=neighbor.paths.length;
             };

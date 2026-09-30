@@ -287,6 +287,57 @@ Observed BGP paths uses `mapped`, `not_observed`, `special_use`, `invalid`, and 
 Its `mapped` status does not guarantee a known name, a provider classification,
 or even an observed adjacent AS.
 
+## Respectful RIPE requests and cancellation
+
+All RIPE requests from the local server share one request gate across ordinary
+lookups, captures, comparisons, and browser tabs. It allows **one active request
+at a time**, with a **two-second pause after a response**, including retries.
+There is **no daily request cap**. The existing 20-entry observed-path/capture
+limit and 1,000-entry Origin Mapping limit are unchanged.
+
+The page shows requests attempted today (UTC). At **1,000 attempts**, an in-page
+notification advises registering regular high-volume use with RIPE; processing
+continues. Retries count; cache hits, local-only inputs, and CAIDA downloads do
+not. The notice remains visible for that UTC day, including after a page reload.
+The counter resets at midnight UTC and survives server restarts. It applies to
+this cache directory, not all software using your public IP address.
+
+[RIPEstat's usage guidance](https://data.stat.ripe.net/docs/data-api/ripestat-data-api)
+allows eight concurrent requests per source IP and asks users to register if
+regularly exceeding 1,000 requests/day. Our single-request/two-second pace is a
+conservative choice, not RIPE-mandated timing or a guarantee against throttling.
+The app does not register or send email on your behalf.
+
+Normalized duplicate targets are collapsed before a server lookup/capture.
+Responses are reused from bounded memory caches (latest: five minutes;
+historical: one hour). This avoids extra queries without saving raw responses
+or investigation targets in a new disk database.
+
+HTTP 429, HTTP 5xx, and transport failures trigger exponential backoff, honoring
+`Retry-After` in seconds or HTTP-date form. Three consecutive transient failures
+stop further requests for at least five minutes; a longer `Retry-After` takes
+precedence. A single service-requested delay over 60 seconds also stops the job
+instead of keeping it waiting indefinitely. Retry explicitly after the cooldown.
+Ordinary lookups retain partial results and mark remaining targets `not_requested`.
+Interrupted evidence captures/comparisons do not publish an incomplete ZIP.
+
+**Cancel lookup** appears while a job is queued or running. It cancels future work,
+including requests waiting in backoff. An in-flight request or parsing step may
+finish first; requests already sent still count. Completed ordinary results
+remain exportable. Closing the browser does not cancel the server job.
+
+The small `data/private/requests.sqlite3` file stores only counts and timing,
+not targets or evidence. The shared raw-response cache is bounded to 32 MB in
+memory, in addition to the existing path cache. A previous prototype database,
+if present, is left untouched; its counter can be copied once to preserve usage.
+No persistent bulk jobs, recovery keys, or new evidence storage are added.
+
+Use `python3 server.py --ripe-interval 2` (or a larger interval) to configure
+pacing. `lookup.py --paths` uses the same gate and counter. Only one network-using
+process can own a cache directory; use the running server rather than a concurrent
+CLI process. Different directories/hosts have separate gates, so avoid parallel
+instances that multiply aggregate load.
+
 ## Saved investigations and comparisons
 
 These features apply to **Observed BGP paths**, not Origin Mapping. They support
@@ -602,8 +653,8 @@ capture every event during an interval.
 | Retained path evidence | At most 1,000 path/prefix combinations per input, divided among neighbors |
 | Origin segments / overlapping routes | 5,000 segments per batch / 20,000 routes per input |
 | Job execution | One worker; up to three outstanding jobs including the running job |
-| Retained jobs | At most 40; expire one hour after creation; restart clears them |
-| Browser polling | About every 1.5 seconds, with a 15-minute UI timeout |
+| Retained jobs | At most 40; active jobs retained; finished results expire after one hour; restart clears them |
+| Browser polling | About every 1.5 seconds for jobs; shared counter every five seconds |
 | RIS response cache | Up to eight responses; latest for five minutes, historical for one hour |
 | In-memory dataset maps | Up to two routing indexes and two organization maps |
 | Catalog cache | One hour |
@@ -619,8 +670,7 @@ CAIDA enrichment locally. Actual performance depends on input and upstream data.
 
 The cache contains public data, not saved user reports. Catalog files are separate
 from the compressed-file cap; the application does not have a hard 512 MB total
-memory/disk limit. Multiple processes need separate cache directories because
-cross-process cache coordination is not implemented.
+memory/disk limit. One network-using process may own each cache directory at a time.
 
 ## Privacy and security
 
@@ -688,6 +738,9 @@ URLs or client-side code. Treat exported investigation context as potentially se
 
 ## Local API
 
+`GET /api/requests` returns the shared UTC-day count, notification flag, pacing,
+and cooldown timing. It uses the same Host/Origin/service-token checks.
+
 | Method and path | Purpose |
 | --- | --- |
 | `GET /` | Browser interface |
@@ -713,7 +766,7 @@ curl --fail-with-body \
   'http://127.0.0.1:8765/api/jobs/<job-id>'
 ```
 
-States are `queued`, `running`, `complete`, and `failed`. A completed job contains
+States are `queued`, `running`, `complete`, `cancelled`, and `failed`. A completed job contains
 `result`, but individual entries may still have error statuses. Poll sparingly
 instead of creating duplicate jobs.
 
@@ -744,6 +797,7 @@ job token, `413` oversized body, `415` non-JSON job request, and `429` full job 
 | --- | --- | --- |
 | `--host` | `127.0.0.1` | Bind address; keep loopback for local use. |
 | `--port` | `8765` | HTTP port. |
+| `--ripe-interval` | `2` | Pause between RIPE requests in seconds; minimum 2. |
 | `--cache` | `data/` beside the server | Public dataset cache directory. |
 | `BGP_LOOKUP_SERVICE_TOKEN` | Unset | Shared secret; 32+ characters required for non-loopback binding. |
 | `SSL_CERT_FILE` | Python's trust configuration | Optional approved CA bundle. |
@@ -803,8 +857,14 @@ For a corrupt cached dataset, stop the service and move the affected cache file
 aside before retrying. Caches are replaceable downloads, but restarting clears
 in-memory jobs. Do not remove source files or saved analyst exports.
 
-The browser's 15-minute timeout does not cancel a server-side job. There is no
-cancellation endpoint in this version.
+Use **Cancel lookup** while a job is queued or running. It stops subsequent work;
+an in-flight request or parsing step may finish first. Completed ordinary lookup
+results remain exportable; unfinished targets are marked `not_requested`.
+Cancelling an investigation capture/comparison does not produce an incomplete ZIP.
+If cancellation arrives after processing finishes, the completed result is retained.
+The API is `POST /api/jobs/{id}/cancel`, using the job's `X-Job-Token` and the same
+Host/Origin/service-token checks as other job routes. Closing a tab alone does not
+cancel a server-side job.
 
 ## Development and project structure
 
@@ -834,6 +894,9 @@ bgp-routing-exposure-lookup/
   lookup.py                 Imports, datasets, origin lookup, and CLI
   paths.py                  RIS paths, relationship matching, and export
   server.py                 Local HTTP server and in-memory job API
+  ripe_queue.py             Shared pacing, backoff, and request-count notification
+  test_ripe_queue.py         Request scheduling and notification tests
+  test_cancel.py             Queued/running cancellation and partial results tests
   investigations.py         Evidence bundles, offline replay, and two-date comparisons
   test_investigations.py     Replay, bundle integrity, and comparison tests
   test_investigation_http.py Bundle API and access-control tests
