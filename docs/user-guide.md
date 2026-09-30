@@ -22,7 +22,7 @@
 6. Expand path/prefix summaries. AS names appear inline beside each ASN when available.
 7. Export CSV or JSON as needed.
 
-ASNs require the case-insensitive `AS` prefix: use `AS63`, not a bare `63`.
+ASNs require the case-insensitive `AS` prefix: use `AS3333`, not a bare `3333`.
 Start-end ranges are not supported in this mode; supply CIDRs instead.
 
 ### Origin Mapping
@@ -50,18 +50,18 @@ malformed CSV or an oversized batch can reject the entire import.
 Observed BGP paths:
 
 ```text
-AS63
-129.55.110.9
-129.55.0.0/24
+AS3333
+193.0.0.1
+193.0.0.0/24
 ```
 
 Origin Mapping:
 
 ```text
 # One resource per line
-129.55.110.9
-129.55.0.0/24
-129.55.110.1-129.55.110.20
+193.0.0.1
+193.0.0.0/24
+193.0.0.1-193.0.0.20
 2606:4700:4700::1111
 ```
 
@@ -79,9 +79,9 @@ are ignored and are not carried into results or exports.
 
 ```csv
 label,resource
-Origin investigation,AS63
-Single address,129.55.110.9
-Network investigation,129.55.0.0/24
+Origin investigation,AS3333
+Single address,193.0.0.1
+Network investigation,193.0.0.0/24
 ```
 
 This example is for Observed BGP paths. Remove the ASN row for Origin Mapping.
@@ -91,8 +91,8 @@ TSV uses the same rules with tab separators. Files containing both `ip` and
 ### Validation details
 
 - URLs, domain names, and IPv6 zone identifiers are not accepted.
-- CIDRs normalize to network boundaries: `129.55.110.9/24` becomes
-  `129.55.110.0/24`. Origin Mapping records this in its result note.
+- CIDRs normalize to network boundaries: `193.0.0.1/24` becomes
+  `193.0.0.0/24`. Origin Mapping records this in its result note.
 - Range endpoints must use the same address family and be in ascending order.
 - Known special-use inputs are identified using the ranges in `lookup.py`.
   This is not a complete public-address registry or a privacy firewall.
@@ -112,19 +112,19 @@ CAIDA's dated relationship dataset.
 For this illustrative path:
 
 ```text
-AS24482 -> AS1828 -> AS13789 -> AS63
+AS24482 -> AS20562 -> AS1103 -> AS3333
 ```
 
-`AS63` is the origin and `AS13789` is the immediate observed neighbor. `AS1828`
+`AS3333` is the origin and `AS1103` is the immediate observed neighbor. `AS20562`
 and `AS24482` occur farther along the observed path; the tool does not claim they
-are direct providers of AS63. Example paths are not a promise of current routing.
+are direct providers of AS3333. Example paths are not a promise of current routing.
 
 ### Three layers of interpretation
 
-- **Observed fact:** in `AS367 -> AS636`, AS367 appears immediately before
-  the origin AS636 in the collected BGP path for the displayed prefix and time.
-- **Relationship inference:** separate, dated CAIDA data may classify AS367
-  as a transit provider, peer, or customer of AS636. Missing classification
+- **Observed fact:** in `AS1103 -> AS3333`, AS1103 appears immediately before
+  the origin AS3333 in the collected BGP path for the displayed prefix and time.
+- **Relationship inference:** separate, dated CAIDA data may classify AS1103
+  as a transit provider, peer, or customer of AS3333. Missing classification
   remains unknown; adjacency alone does not establish a commercial relationship.
 - **Security interpretation:** that adjacency represents potential ingress worth
   investigating. It does not confirm traffic flow, a reachable entry point,
@@ -348,11 +348,11 @@ implemented; changes between observation times can remain invisible.
 
 | Term | Meaning in this tool |
 | --- | --- |
-| AS / ASN | Autonomous system and its identifier, written as `AS63`. |
+| AS / ASN | Autonomous system and its identifier, written as `AS3333`. |
 | Origin AS | Final AS in an accepted observed route path. |
 | AS path | Ordered AS sequence, read toward the origin. |
 | Observed adjacent AS | Distinct AS immediately before the origin. |
-| CIDR / prefix | Address block such as `129.55.0.0/24`. |
+| CIDR / prefix | Address block such as `193.0.0.0/24`. |
 | Longest-prefix match | Prefer the most specific matching route for an address. |
 | RIB | Routing Information Base, a routing-state baseline. |
 | RIS / RRC | RIPE Routing Information Service and its remote route collectors. |

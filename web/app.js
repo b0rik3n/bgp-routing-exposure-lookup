@@ -9,7 +9,7 @@
       this.root.innerHTML = `<link rel="stylesheet" href="${new URL("style.css", assets)}">
         <div class="view-tabs" role="tablist" aria-label="Lookup view"><button role="tab" id="paths-tab" aria-selected="true">Observed BGP paths</button><button role="tab" id="origins-tab" aria-selected="false">Origin mapping</button></div>
         <form><section class="entry"><div><div class="entry-head"><label for="resources">IP addresses &amp; networks</label><div class="row"><button type="button" id="example" title="Load example addresses">Example</button><button type="button" id="import">${icon("upload")}Import file</button><input id="file" type="file" accept=".csv,.txt,.tsv,text/plain,text/csv" hidden></div></div>
-        <textarea id="resources" spellcheck="false" placeholder="129.55.110.9&#10;129.55.0.0/24" aria-label="IP addresses, CIDRs, or start-end ranges"></textarea><p class="privacy" id="filename">CSV, TSV, or TXT · Up to 1,000 entries</p></div>
+        <textarea id="resources" spellcheck="false" placeholder="193.0.0.1&#10;193.0.0.0/24" aria-label="IP addresses, CIDRs, or start-end ranges"></textarea><p class="privacy" id="filename">CSV, TSV, or TXT · Up to 1,000 entries</p></div>
         <div class="configuration"><fieldset><legend>Routing date</legend><div class="mode"><label><input name="mode" type="radio" value="latest" checked><span>Latest</span></label><label><input name="mode" type="radio" value="historical"><span>Historical</span></label></div><div class="date-wrap" hidden><label for="date">Snapshot date (UTC)</label><input id="date" type="date" min="2005-05-09"></div></fieldset><button class="primary" id="resolve" type="submit">${icon("search")}Resolve networks</button><p class="privacy">Inputs stay on the lookup server. No connections are made to imported IPs.</p></div></section></form>
         <details id="investigation-tools" class="investigation-tools"><summary>Save and compare investigations</summary>
           <p class="muted">Capture observed BGP paths with their evidence, or open a saved ZIP without external queries. Up to 1,000 inputs; origin mapping is not included.</p>
@@ -65,7 +65,7 @@
         try { this.el("resources").value = await file.text(); this.el("filename").textContent = file.name; this.status("File loaded"); }
         catch { this.status("File could not be read.", true); }
       };
-      this.el("example").onclick = () => { this.el("resources").value = this.view==="paths" ? "AS63" : "129.55.110.9\n129.55.0.0/24\n8.8.8.8\n1.1.1.0/24\n2606:4700:4700::1111\n10.0.0.1"; this.el("filename").textContent = "Example input"; };
+      this.el("example").onclick = () => { this.el("resources").value = this.view==="paths" ? "AS3333" : "193.0.0.1\n193.0.0.0/24\n8.8.8.8\n1.1.1.0/24\n2606:4700:4700::1111\n10.0.0.1"; this.el("filename").textContent = "Example input"; };
       this.el("search").oninput = () => this.renderRows();
       this.el("filter").onchange = () => this.renderRows();
       this.el("csv").onclick = () => this.downloadCsv();
@@ -73,7 +73,7 @@
       this.el("path-csv").onclick=()=>this.downloadCsv();
       this.el("path-json").onclick=()=>this.download(JSON.stringify(this.payload,null,2),"application/json","observed-paths.json");
       this.setView("paths");
-      this.el("resources").value="AS63";
+      this.el("resources").value="AS3333";
     }
     disconnectedCallback() { clearInterval(this.requestTimer); clearTimeout(this.timer); this.controller?.abort(); }
     el(id) { return this.root.getElementById(id); }
@@ -86,9 +86,9 @@
       ["paths","origins"].forEach(name=>{this.el(`${name}-tab`).setAttribute("aria-selected",String(name===view));this.el(`${name}-tab`).tabIndex=name===view?0:-1;});
       this.el("results").hidden=true;this.el("path-results").hidden=true;this.el("empty").hidden=false;
       this.root.querySelector('label[for="resources"]').textContent=paths?"ASN, IP address, or network":"IP addresses & networks";
-      this.el("resources").placeholder=paths?"AS63\n129.55.110.9\n129.55.0.0/24":"129.55.110.9\n129.55.0.0/24";
+      this.el("resources").placeholder=paths?"AS3333\n193.0.0.1\n193.0.0.0/24":"193.0.0.1\n193.0.0.0/24";
       this.el("resources").setAttribute("aria-label",paths?"ASNs, IP addresses, or CIDRs":"IP addresses, CIDRs, or start-end ranges");
-      if (!paths && this.el("resources").value==="AS63") this.el("resources").value="129.55.110.9";
+      if (!paths && this.el("resources").value==="AS3333") this.el("resources").value="193.0.0.1";
       this.el("resolve").innerHTML=icon("search")+(paths?"Find observed paths":"Resolve networks");
       this.el("filename").textContent=paths?"CSV, TSV, or TXT · Up to 1,000 entries":"CSV, TSV, or TXT · Up to 1,000 entries";
       this.root.querySelector(".configuration .privacy").textContent=paths?"Public IP, prefix, or ASN queries are sent to RIPE NCC. No connections are made to imported IPs.":"Inputs stay on the lookup server. No connections are made to imported IPs.";

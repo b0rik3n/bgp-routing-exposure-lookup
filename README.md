@@ -50,10 +50,13 @@ and run the last two commands. These examples use a macOS/Linux-style shell.
 ### 2. Open the interface and run a lookup
 
 1. Open [http://127.0.0.1:8765](http://127.0.0.1:8765).
-2. Leave **Observed BGP paths** selected and enter `AS63`.
+2. Leave **Observed BGP paths** selected and enter `AS3333`.
 3. Select **Latest**, then **Find observed paths**.
 4. Expand a path/prefix summary. AS names appear inline when available.
 5. Review warnings and source dates before exporting **CSV** or **JSON**.
+
+AS3333 is RIPE NCC’s network and is used as a public routing example. No
+affiliation or endorsement by RIPE NCC is implied.
 
 The first lookup can take longer while public datasets download. Keep the terminal
 running; stop the server with `Ctrl+C` when finished. Opening `web/index.html`
@@ -66,7 +69,7 @@ See [troubleshooting](docs/operations.md#troubleshooting) for other problems.
 | | Observed BGP paths | Origin Mapping |
 | --- | --- | --- |
 | Question | Which networks appear immediately before the origin AS? | Which AS announces the prefix covering an address or range? |
-| Inputs | ASN (`AS63`), IP, or CIDR | IP, CIDR, or start-end range |
+| Inputs | ASN (`AS3333`), IP, or CIDR | IP, CIDR, or start-end range |
 | Routing source | RIPE RIS paths via RIPEstat | CAIDA RouteViews prefix-to-AS snapshots |
 | Supporting data | CAIDA names and inferred relationships | CAIDA names |
 | History | Observation at 12:00 UTC on the selected date | Latest available routing snapshot within the selected date |
@@ -77,27 +80,28 @@ vary. See [date semantics](docs/user-guide.md#current-and-historical-data).
 
 ## Worked investigation
 
-**Question:** Which networks are observed adjacent to AS63 for a selected prefix,
+**Question:** Which networks are observed adjacent to AS3333 for a selected prefix,
 and does that observation differ between two dates?
 
 ### 1. Inspect the evidence
 
 Run the quick-start lookup and expand a path. The following is an **illustrative
-example**, not a live result or a claim about current routing:
+example**, based on a RIS observation at 2026-09-30 07:59:47 UTC.
+It is not a promise of current routing; your results may differ:
 
 ```text
-Prefix: 129.55.0.0/16
-Path:   AS24482 → AS1828 → AS13789 → AS63
+Prefix: 193.0.0.0/21
+Path:   AS24482 → AS20562 → AS1103 → AS3333
 ```
 
 | Layer | Supported interpretation |
 | --- | --- |
-| Observed fact | AS13789 immediately precedes origin AS63 in this path for this prefix at the recorded observation time. |
-| Relationship inference | A separate CAIDA snapshot may classify AS13789 as provider, peer, or customer; absent evidence remains unknown. |
+| Observed fact | AS1103 immediately precedes origin AS3333 in this path for this prefix at the recorded observation time. |
+| Relationship inference | A separate CAIDA snapshot may classify AS1103 as provider, peer, or customer; absent evidence remains unknown. |
 | Security interpretation | This is a routing dependency worth investigating, not a confirmed ingress point or vulnerability. |
 
-AS1828 and AS24482 appear farther along this path; that does not make them direct
-neighbors of AS63. Record the **RIS observation time**, **collector coverage**,
+AS20562 and AS24482 appear farther along this path; that does not make them direct
+neighbors of AS3333. Record the **RIS observation time**, **collector coverage**,
 **CAIDA source dates**, and any **warnings or truncation**. Peer counts measure
 visibility in the collected data, not traffic share or confidence.
 
@@ -141,9 +145,9 @@ A CSV can use a single recognized resource column, for example:
 
 ```csv
 resource
-AS63
-129.55.110.9
-129.55.0.0/24
+AS3333
+193.0.0.1
+193.0.0.0/24
 ```
 
 ASNs require the `AS` prefix and work only in Observed BGP paths. Both modes

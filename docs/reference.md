@@ -13,23 +13,23 @@ messages to standard error.
 
 ```sh
 # Current observed BGP paths for an origin AS
-python3 lookup.py --paths AS63
+python3 lookup.py --paths AS3333
 
 # Historical paths for a specific IP
-python3 lookup.py --paths 129.55.110.9 --date 2026-08-01
+python3 lookup.py --paths 193.0.0.1 --date 2026-08-01
 
 # Map IPs and CIDRs to origin networks
-python3 lookup.py 129.55.110.9 129.55.0.0/24
+python3 lookup.py 193.0.0.1 193.0.0.0/24
 
 # Import and export historical origin mappings
 python3 lookup.py --input networks.csv --date 2026-08-01 --format csv > origins.csv
 
 # Export observed-path evidence
 python3 lookup.py --paths --input resources.txt --format csv > observed-paths.csv
-python3 lookup.py --paths AS63 > observed-paths.json
+python3 lookup.py --paths AS3333 > observed-paths.json
 
 # Use a separate dataset cache
-python3 lookup.py --paths AS63 --cache ./lookup-cache
+python3 lookup.py --paths AS3333 --cache ./lookup-cache
 
 # Show command options
 python3 lookup.py --help
@@ -98,7 +98,7 @@ Create an Observed BGP paths job:
 ```sh
 curl --fail-with-body http://127.0.0.1:8765/api/jobs \
   -H 'Content-Type: application/json' \
-  --data '{"text":"AS63","date":"latest","mode":"paths"}'
+  --data '{"text":"AS3333","date":"latest","mode":"paths"}'
 ```
 
 HTTP `202` returns an `id` and `token`. Substitute those values below. The
