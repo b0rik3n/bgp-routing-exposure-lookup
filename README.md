@@ -1,5 +1,16 @@
 # Múcaro | BGP Routing Exposure Lookup
 
+**It maps an organization’s observed internet connections to help analysts
+investigate external dependencies and changes.**
+
+This tool helps us understand which networks sit between an organization and the
+wider internet. It uses publicly available routing information to show connections
+that have been observed and how they change over time.
+
+Think of it as studying a road map around a building: it helps identify possible
+approaches, but it doesn’t tell us which road a particular visitor took—or whether
+any doors are unlocked.
+
 Investigate **which external networks are observed immediately before a target
 origin AS, for which prefixes, and how those observations change over time**.
 Use public BGP observations, separately inferred relationships, and saved evidence
