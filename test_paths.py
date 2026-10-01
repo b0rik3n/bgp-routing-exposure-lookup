@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from lookup import Datasets, LookupError, parse_import
-from paths import MAX_PATH_INPUTS, PathLookup, normalize_path, parse_path_resource, parse_relationships, select_routes, summarize_routes, path_csv_export
+from paths import MAX_PATH_INPUTS, PathLookup, normalize_path, parse_path_resource, parse_relationships, select_routes, summarize_routes, path_csv_export, visibility_context
 
 
 def route(path, prefix="129.55.0.0/16", peer="00-8.8.8.8"):
@@ -86,6 +86,16 @@ class PathTests(unittest.TestCase):
         groups,_=summarize_routes(rows,{}, {})
         self.assertEqual(groups[0]["neighbors"],[])
         self.assertEqual(groups[0]["directObservations"],1)
+
+    def test_visibility_context_describes_observation_breadth_not_confidence(self):
+        limited = visibility_context(["rrc00"], 1, ["129.55.0.0/16"])
+        multi = visibility_context(["rrc00", "rrc01"], 3, ["129.55.0.0/16", "129.55.1.0/24"])
+        broader = visibility_context(["rrc00", "rrc01", "rrc03", "rrc10"], 5, ["129.55.0.0/16"])
+        self.assertEqual(limited["label"], "Limited public routing visibility")
+        self.assertEqual(multi["label"], "Multi-collector public routing visibility")
+        self.assertEqual(broader["label"], "Broader public routing visibility")
+        self.assertEqual(multi["peerCount"], 3)
+        self.assertIn("not confidence", broader["meaning"])
 
     def test_special_use_stays_local(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -160,6 +160,29 @@ class ConnectionTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_static_policy_allows_only_ripe_live_websocket(self):
+        conn = http.client.HTTPConnection(*self.server.server_address, timeout=2)
+        try:
+            conn.request('GET','/app.js',headers={'Authorization':'Bearer secret'})
+            response = conn.getresponse()
+            self.assertEqual(response.status,200)
+            self.assertIn("connect-src 'self' wss://ris-live.ripe.net;", response.getheader('Content-Security-Policy'))
+        finally:
+            conn.close()
+
+    def test_country_map_static_asset_is_served(self):
+        conn = http.client.HTTPConnection(*self.server.server_address, timeout=2)
+        try:
+            conn.request('GET','/world-countries.json',headers={'Authorization':'Bearer secret'})
+            response = conn.getresponse()
+            self.assertEqual(response.status,200)
+            self.assertIn('application/geo+json', response.getheader('Content-Type'))
+            payload = json.loads(response.read())
+            self.assertEqual(payload['type'], 'FeatureCollection')
+            self.assertGreaterEqual(len(payload['features']), 230)
+        finally:
+            conn.close()
+
 
 class SourceAccessTests(unittest.TestCase):
     def test_status_reports_each_required_source(self):

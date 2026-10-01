@@ -107,6 +107,13 @@ path evidence. Completed means processing finished; it does not guarantee full
 Internet visibility. Observed advertisements are not measured traffic paths, and
 collector counts are not confidence scores or traffic shares.
 
+Each observed origin also has a public-routing-visibility label based only on
+the number of distinct RIS collectors: **Limited** for one collector,
+**Multi-collector** for two or three, and **Broader** for four or more. The
+adjacent label shows the exact collector, collector-peer, prefix, and observation
+time counts. It is evidence context, not a confidence, risk, reachability, or
+traffic-volume assessment.
+
 Finished jobs expire after one hour, or earlier when new work needs space.
 The server evicts the oldest finished jobs at the 40-job limit or the shared
 128 MB budget for serialized results plus investigation ZIPs. Queued and running

@@ -24,7 +24,8 @@ from paths import MAX_PATH_INPUTS, PathLookup, parse_path_resource, path_csv_exp
 
 ROOT = Path(__file__).parent
 ASSETS = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"),
-          "/style.css": ("style.css", "text/css"), "/icons.svg": ("icons.svg", "image/svg+xml")}
+          "/style.css": ("style.css", "text/css"), "/icons.svg": ("icons.svg", "image/svg+xml"),
+          "/world-countries.json": ("world-countries.json", "application/geo+json")}
 
 
 class SourceAccess:
@@ -303,7 +304,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'")
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' wss://ris-live.ripe.net; img-src 'self' data:; frame-ancestors 'none'")
         if filename:
             self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         self.end_headers()

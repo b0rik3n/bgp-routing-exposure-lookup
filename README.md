@@ -24,6 +24,7 @@ external connectivity. The bundled server is not a production public service.
 
 - [Quick start](#quick-start)
 - [Choose a lookup mode](#choose-a-lookup-mode)
+- [Live RIS View](#live-ris-view)
 - [Worked investigation](#worked-investigation)
 - [Imports, progress, and cancellation](#imports-progress-and-cancellation)
 - [Privacy and operating limits](#privacy-and-operating-limits)
@@ -81,17 +82,32 @@ See [troubleshooting](docs/operations.md#troubleshooting) for other problems.
 
 ## Choose a lookup mode
 
-| | Observed BGP paths | Origin Mapping |
-| --- | --- | --- |
-| Question | Which networks appear immediately before the origin AS? | Which AS announces the prefix covering an address or range? |
-| Inputs | ASN (`AS3333`), IP, or CIDR | IP, CIDR, or start-end range |
-| Routing source | RIPE RIS paths via RIPEstat | CAIDA RouteViews prefix-to-AS snapshots |
-| Supporting data | CAIDA names and inferred relationships | CAIDA names |
-| History | Observation at 12:00 UTC on the selected date | Latest available routing snapshot within the selected date |
-| Import limit | 1,000 entries | 1,000 entries |
+| | Observed BGP paths | Origin Mapping | Live RIS View |
+| --- | --- | --- | --- |
+| Question | Which networks appear immediately before the origin AS? | Which AS announces the prefix covering an address or range? | What updates is RIS observing for one selected AS right now? |
+| Inputs | ASN (`AS3333`), IP, or CIDR | IP, CIDR, or start-end range | One AS number |
+| Routing source | RIPE RIS paths via RIPEstat | CAIDA RouteViews prefix-to-AS snapshots | RIPE RIS Live WebSocket |
+| Supporting data | CAIDA names and inferred relationships | CAIDA names | Collector and peer information in each update |
+| History | Observation at 12:00 UTC on the selected date | Latest available routing snapshot within the selected date | Temporary, current event stream only |
+| Import limit | 1,000 entries | 1,000 entries | One active AS subscription |
 
 Neither mode probes the destination. Historical availability and collector coverage
 vary. See [date semantics](docs/user-guide.md#current-and-historical-data).
+
+## Live RIS View
+
+Select **Live RIS View**, enter one AS number, and choose **Start live view**.
+The default filter shows updates where that AS is the origin; the broader option
+shows updates where it appears anywhere in an observed path. The view displays
+the most recent 250 RIS Live announcements or withdrawals with the collector,
+peer ASN, prefixes, and an AS path when one is present.
+
+The browser opens a direct, temporary connection to RIPE RIS only after you
+select **Start live view**. RIPE can see the selected AS filter and your public
+source IP. No RIPE account or API key is required at present. Select **Stop** to
+close the connection and clear displayed events. The view does not retain events,
+create alerts, or establish traffic flow, reachability, a policy violation, or a
+security incident.
 
 ## Worked investigation
 
@@ -119,6 +135,13 @@ AS20562 and AS24482 appear farther along this path; that does not make them dire
 neighbors of AS3333. Record the **RIS observation time**, **collector coverage**,
 **CAIDA source dates**, and any **warnings or truncation**. Peer counts measure
 visibility in the collected data, not traffic share or confidence.
+
+Each expanded path also offers **Registered organization country context**. It
+maps the CAIDA country field for each AS hop and lists its role, ASN, and
+organization name. It is a compact reference for organization registration
+context, not a geographic traffic route, network presence, or collector location.
+The leftmost AS is part of a route advertisement observed by RIS; it does not by
+itself identify a traffic source or direct relationship with the origin.
 
 ### 2. Save a reproducible investigation
 
@@ -149,8 +172,8 @@ check, not a correction for every collector bias.
 
 To decide whether a change is expected, compare it with independent, time-aligned
 operator records or authorized network measurements. Two snapshots cannot tell
-you the exact change time or what happened between them. There is no continuous
-monitoring. See the [investigation guide](docs/user-guide.md#saved-investigations-and-comparisons)
+you the exact change time or what happened between them. The tool does not
+provide persistent monitoring or alerting. See the [investigation guide](docs/user-guide.md#saved-investigations-and-comparisons)
 for bundle contents, replay limitations, and detailed comparison labels.
 
 ## Imports, progress, and cancellation
@@ -175,15 +198,20 @@ lookups and captures. See [all import rules](docs/user-guide.md#import-formats).
 - **Warnings:** review failed or unprocessed inputs, unavailable enrichment,
   partial coverage, and truncated evidence. Processing finished does not mean
   every entry succeeded or that routing visibility is complete.
+- **Path-evidence cap:** collector, peer, prefix, and path counts describe all
+  accepted RIS routes, but the detailed browser list and ordinary CSV retain a
+  bounded subset divided among observed adjacent ASes. An investigation ZIP
+  preserves the raw RIS response for offline replay.
 - **Cancel lookup:** stops future work; an in-flight operation may finish first.
   Completed ordinary results remain exportable. Interrupted captures/comparisons
   do not produce an incomplete ZIP. Closing a tab does not cancel the job.
 
 ## Privacy and operating limits
 
-**Local interface does not mean private queries.** Live path lookups, captures,
-and comparisons send normalized targets and requested observation times to RIPE,
-which also sees your public source IP. CAIDA receives dataset download requests.
+**Local interface does not mean private queries.** Path lookups, captures, and
+comparisons send normalized targets and requested observation times to RIPE,
+which also sees your public source IP. Live RIS View sends its selected AS filter
+directly from the browser to RIPE RIS. CAIDA receives dataset download requests.
 Offline bundle replay makes no external queries. Exports are unencrypted and may
 contain sensitive investigation context. Read [query privacy](docs/operations.md#query-privacy)
 before submitting confidential targets.
@@ -241,6 +269,7 @@ screenshots and logs before sharing them.
 | [CAIDA RouteViews Prefix-to-AS](https://www.caida.org/catalog/datasets/routeviews-prefix2as/) | Daily prefix-to-origin mappings. |
 | [CAIDA AS Organizations](https://www.caida.org/catalog/datasets/as-organizations/) | Dated ASN and organization names. |
 | [CAIDA AS Relationships](https://www.caida.org/catalog/datasets/as-relationships/) | Dated serial-2 provider/customer and peer inferences. |
+| [Natural Earth Admin 0 Countries](https://www.naturalearthdata.com/downloads/110m-cultural-vectors/110m-admin-0-countries/) | Bundled public-domain country boundaries for the optional organization-country context map. |
 | [BGPStream](https://bgpstream.caida.org/docs) | Related ingestion framework, not a runtime dependency. |
 
 Data remains subject to each provider's terms. Review them before redistribution

@@ -26,6 +26,20 @@ REL_LABELS = {"provider": "Transit provider (inferred)", "peer": "Peer (inferred
               "customer": "Customer (inferred)", "unknown": "Relationship unknown"}
 
 
+def visibility_context(collectors, peer_count, prefixes):
+    """Describe the breadth of public RIS observation without scoring confidence."""
+    collector_count = len(collectors)
+    if collector_count <= 1:
+        label = "Limited public routing visibility"
+    elif collector_count <= 3:
+        label = "Multi-collector public routing visibility"
+    else:
+        label = "Broader public routing visibility"
+    return {"label": label, "collectorCount": collector_count, "peerCount": peer_count,
+            "prefixCount": len(prefixes),
+            "meaning": "RIS collector and peer observations describe public routing visibility, not confidence or traffic share."}
+
+
 def parse_path_resource(raw):
     value = raw.strip()
     match = re.fullmatch(r"AS([0-9]{1,10})", value, re.IGNORECASE)
@@ -152,8 +166,12 @@ def summarize_routes(routes, organizations, relationships):
                               "pathCount": len(paths), "pathsTruncated": len(paths) > evidence_limit,
                               "paths": [{"prefix": p["prefix"], "asns": p["asns"], "collectors": sorted(p["collectors"]), "peerCount": len(p["sources"])} for p in paths[:evidence_limit]]})
         neighbors.sort(key=lambda entry: (entry["relationship"] != "provider", -entry["peerCount"], entry["asn"]))
-        result.append({"origin": group["origin"], "neighbors": neighbors, "peerCount": len(group["sources"]),
-                       "collectors": sorted(group["collectors"]), "prefixes": sorted(group["prefixes"]), "directObservations": group["directObservations"]})
+        collectors, prefixes = sorted(group["collectors"]), sorted(group["prefixes"])
+        peer_count = len(group["sources"])
+        result.append({"origin": group["origin"], "neighbors": neighbors, "peerCount": peer_count,
+                       "collectors": collectors, "prefixes": prefixes,
+                       "visibility": visibility_context(collectors, peer_count, prefixes),
+                       "directObservations": group["directObservations"]})
     names = {str(asn): organizations.get(asn, {"asn": asn, "name": None}) for asn in sorted(all_asns)}
     return result, names
 

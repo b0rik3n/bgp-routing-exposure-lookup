@@ -7,7 +7,7 @@
       if (this.root) return;
       this.root = this.attachShadow({mode: "open"});
       this.root.innerHTML = `<link rel="stylesheet" href="${new URL("style.css", assets)}">
-        <div class="view-tabs" role="tablist" aria-label="Lookup view"><button role="tab" id="paths-tab" aria-selected="true">Observed BGP paths</button><button role="tab" id="origins-tab" aria-selected="false">Origin mapping</button></div>
+        <div class="view-tabs" role="tablist" aria-label="Lookup view"><button role="tab" id="paths-tab" aria-selected="true">Observed BGP paths</button><button role="tab" id="origins-tab" aria-selected="false">Origin mapping</button><button role="tab" id="live-tab" aria-selected="false">Live RIS View</button></div>
         <form><section class="entry"><div><div class="entry-head"><label for="resources">IP addresses &amp; networks</label><div class="row"><button type="button" id="example" title="Load example addresses">Example</button><button type="button" id="import">${icon("upload")}Import file</button><input id="file" type="file" accept=".csv,.txt,.tsv,text/plain,text/csv" hidden></div></div>
         <textarea id="resources" spellcheck="false" placeholder="193.0.0.1&#10;193.0.0.0/24" aria-label="IP addresses, CIDRs, or start-end ranges"></textarea><p class="privacy" id="filename">CSV, TSV, or TXT · Up to 1,000 entries</p></div>
         <div class="configuration"><fieldset><legend>Routing date</legend><div class="mode"><label><input name="mode" type="radio" value="latest" checked><span>Latest</span></label><label><input name="mode" type="radio" value="historical"><span>Historical</span></label></div><div class="date-wrap" hidden><label for="date">Snapshot date (UTC)</label><input id="date" type="date" min="2005-05-09"></div></fieldset><button class="primary" id="resolve" type="submit">${icon("search")}Resolve networks</button><p class="privacy">Inputs stay on the lookup server. No connections are made to imported IPs.</p></div></section></form>
@@ -30,6 +30,7 @@
         <div class="table-wrap"><table><thead><tr><th>Input / covered range</th><th>Matched BGP prefix</th><th>Origin ASN</th><th>Network organization</th><th>Status</th><th>Routing snapshot</th></tr></thead><tbody id="rows"></tbody></table></div><div id="sources" class="sources"></div><p id="row-count" class="small muted"></p></section>
         <div id="empty" class="empty">${icon("network")}<div>No lookup results</div></div>
         <section id="path-results" hidden><div class="result-head"><h2>Observed paths to origin networks</h2><div class="toolbar"><button id="path-csv" title="Export observed BGP paths as CSV" aria-label="Export observed BGP paths as CSV">${icon("download")}CSV</button><button id="path-json" title="Export observed BGP paths as JSON" aria-label="Export observed BGP paths as JSON">JSON</button></div></div><p class="small muted">Observed routing advertisements—not measured traffic paths. Collector and peer counts describe visibility, not confidence or traffic share. Relationships are separately inferred; an adjacency does not confirm an entry point or vulnerability.</p><div id="path-content"></div></section>
+        <section id="live-view" class="live-view" hidden aria-label="Live RIS View"><div class="result-head"><div><h2>Live RIS View</h2><p class="small muted">A temporary stream of public BGP updates observed by RIPE RIS.</p></div><div class="toolbar"><button type="button" id="live-start" class="primary">Start live view</button><button type="button" id="live-stop" hidden>Stop</button></div></div><div class="live-configuration"><label for="live-asn">AS number<input id="live-asn" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="3333" value="3333" aria-describedby="live-privacy"></label><label for="live-role">Match updates where<select id="live-role"><option value="origin">This AS is the origin</option><option value="path">This AS appears anywhere in the path</option></select></label></div><p id="live-privacy" class="privacy">Starting opens a direct connection from this browser to RIPE RIS. RIPE can observe the selected AS filter and your public IP address. Events stay in browser memory and are cleared when you stop.</p><p id="live-status" class="status" role="status" aria-live="polite">Ready to start a live view.</p><p class="small muted">Live observations do not establish traffic flow, reachability, a security incident, or a policy violation.</p><div id="live-events" class="live-events" aria-live="polite"><p class="muted">No live events yet.</p></div></section>
         <footer class="footer">Data: <a href="https://stat.ripe.net/docs/data-api/api-endpoints/bgp-state" target="_blank" rel="noreferrer">RIPE RIS paths</a>, <a href="https://www.caida.org/catalog/datasets/as-relationships/" target="_blank" rel="noreferrer">CAIDA AS Relationships</a>, <a href="https://www.caida.org/catalog/datasets/routeviews-prefix2as/" target="_blank" rel="noreferrer">RouteViews prefix-to-AS</a>, and <a href="https://www.caida.org/catalog/datasets/as-organizations/" target="_blank" rel="noreferrer">AS Organizations</a>. Relationship classifications are inferences; collector peer counts are not traffic share.</footer>`;
       const today = new Date().toISOString().slice(0,10);
       this.el("date").max = today;
@@ -49,8 +50,11 @@
       this.refreshAccess();this.accessTimer=setInterval(()=>this.refreshAccess(),10000);
       this.el("paths-tab").onclick=()=>this.setView("paths");
       this.el("origins-tab").onclick=()=>this.setView("origins");
-      ["paths-tab","origins-tab"].forEach(id=>this.el(id).onkeydown=(event)=>{
-        if (["ArrowLeft","ArrowRight"].includes(event.key)) {event.preventDefault();this.setView(this.view==="paths"?"origins":"paths");this.el(`${this.view}-tab`).focus();}
+      this.el("live-tab").onclick=()=>this.setView("live");
+      this.el("live-start").onclick=()=>this.startLive();
+      this.el("live-stop").onclick=()=>this.stopLive();
+      ["paths-tab","origins-tab","live-tab"].forEach(id=>this.el(id).onkeydown=(event)=>{
+        if (["ArrowLeft","ArrowRight"].includes(event.key)) {event.preventDefault();const views=["paths","origins","live"],index=views.indexOf(this.view),direction=event.key==="ArrowRight"?1:-1;this.setView(views[(index+direction+views.length)%views.length]);this.el(`${this.view}-tab`).focus();}
       });
       this.root.querySelector("form").addEventListener("submit", (event) => {event.preventDefault(); this.lookup();});
       this.root.querySelectorAll('[name="mode"]').forEach(radio => radio.addEventListener("change", () => {
@@ -73,10 +77,11 @@
       this.el("json").onclick = () => this.download(JSON.stringify(this.payload,null,2), "application/json", "network-lookup.json");
       this.el("path-csv").onclick=()=>this.downloadCsv();
       this.el("path-json").onclick=()=>this.download(JSON.stringify(this.payload,null,2),"application/json","observed-paths.json");
+      this.live={events:[],socket:null};
       this.setView("paths");
       this.el("resources").value="AS3333";
     }
-    disconnectedCallback() { clearInterval(this.requestTimer); clearInterval(this.accessTimer); clearTimeout(this.timer); this.controller?.abort(); }
+    disconnectedCallback() { clearInterval(this.requestTimer); clearInterval(this.accessTimer); clearTimeout(this.timer); this.controller?.abort(); this.stopLive(); }
     el(id) { return this.root.getElementById(id); }
     async refreshAccess() {
       try {
@@ -95,13 +100,17 @@
       }
     }
     setView(view) {
+      if(this.view==="live"&&view!=="live")this.stopLive();
       this.view=view;
-      this.el("investigation-tools").hidden=view!=="paths";
+      const paths=view==="paths", live=view==="live";
+      this.root.querySelector("form").hidden=live;
+      this.el("investigation-tools").hidden=!paths;
       this.el("investigation-results").hidden=true;
       this.investigation=null;this.bundleBlob=null;this.job=null;this.payload=null;
-      const paths=view==="paths";
-      ["paths","origins"].forEach(name=>{this.el(`${name}-tab`).setAttribute("aria-selected",String(name===view));this.el(`${name}-tab`).tabIndex=name===view?0:-1;});
-      this.el("results").hidden=true;this.el("path-results").hidden=true;this.el("empty").hidden=false;
+      ["paths","origins","live"].forEach(name=>{this.el(`${name}-tab`).setAttribute("aria-selected",String(name===view));this.el(`${name}-tab`).tabIndex=name===view?0:-1;});
+      this.el("results").hidden=true;this.el("path-results").hidden=true;this.el("live-view").hidden=!live;this.el("empty").hidden=live;
+      ["request-count","request-notice","notice","batch-progress","result-completeness","cancel-job","status"].forEach(id=>this.el(id).hidden=live);
+      if(live)return;
       this.root.querySelector('label[for="resources"]').textContent=paths?"ASN, IP address, or network":"IP addresses & networks";
       this.el("resources").placeholder=paths?"AS3333\n193.0.0.1\n193.0.0.0/24":"193.0.0.1\n193.0.0.0/24";
       this.el("resources").setAttribute("aria-label",paths?"ASNs, IP addresses, or CIDRs":"IP addresses, CIDRs, or start-end ranges");
@@ -112,6 +121,83 @@
       this.root.querySelector('label[for="date"]').textContent=paths?"Observation date (12:00 UTC)":"Snapshot date (UTC)";
       this.el("notice").textContent=paths?"Observed adjacent ASes appear immediately before the origin AS in RIS paths. Relationships are inferred from separate CAIDA data. These adjacencies represent potential ingress worth investigating; they do not confirm traffic flow, a reachable entry point, a security perimeter, or a vulnerability.":"BGP identifies the announcing network. Its organization may be an ISP, cloud provider, or the organization itself; upstream providers are not inferred in this view.";
       this.status("Ready");
+    }
+    liveStatus(message, error=false, busy=false) {
+      const element=this.el("live-status");
+      element.textContent=message;
+      element.className=`status${error?" error":""}${busy?" busy":""}`;
+    }
+    liveAsn() {
+      const value=this.el("live-asn").value.trim().replace(/^AS/i,"");
+      if(!/^\d{1,10}$/.test(value))return null;
+      const asn=Number(value);
+      return Number.isSafeInteger(asn)&&asn>0&&asn<=4294967295?asn:null;
+    }
+    renderLiveEvents() {
+      const container=this.el("live-events");container.replaceChildren();
+      const events=this.live?.events||[];
+      const node=(tag,text,cls)=>{const element=document.createElement(tag);if(text!==undefined)element.textContent=text;if(cls)element.className=cls;return element;};
+      if(!events.length) {container.append(node("p","No live events yet.","muted"));return;}
+      const list=node("ol",undefined,"live-event-list");container.append(list);
+      for(const event of events) {
+        const item=node("li",undefined,"live-event");list.append(item);
+        item.append(node("strong",event.kind));
+        item.append(node("span",`${event.observedAt} · ${event.collector} · peer AS${event.peerAsn}`,"small muted"));
+        if(event.prefixes) item.append(node("span",event.prefixes,"live-prefixes"));
+        if(event.path) item.append(node("span",event.path,"live-path"));
+      }
+    }
+    liveEvent(message) {
+      if(message?.type==="ris_error") {
+        const detail=message.data?.message||message.data?.error||"RIS Live rejected the subscription.";
+        this.liveStatus(`RIS Live error: ${detail}`,true);return;
+      }
+      if(message?.type!=="ris_message"||!message.data)return;
+      const data=message.data;
+      if(data.type&&data.type!=="UPDATE")return;
+      const prefixes=(entries)=>entries.flatMap(entry=>Array.isArray(entry?.prefixes)?entry.prefixes:[]).filter(value=>typeof value==="string");
+      const announced=prefixes(data.announcements||[]),withdrawn=prefixes(data.withdrawals||[]);
+      if(!announced.length&&!withdrawn.length)return;
+      const label=announced.length&&withdrawn.length?"Announcement and withdrawal":announced.length?"Announcement":"Withdrawal";
+      const prefixText=[announced.length?`Announced: ${announced.slice(0,8).join(", ")}${announced.length>8?` +${announced.length-8} more`:""}`:"",withdrawn.length?`Withdrawn: ${withdrawn.slice(0,8).join(", ")}${withdrawn.length>8?` +${withdrawn.length-8} more`:""}`:""].filter(Boolean).join(" · ");
+      const time=typeof data.timestamp==="number"?new Date(data.timestamp*1000):new Date();
+      const event={kind:label,observedAt:time.toISOString().replace("T"," ").replace(".000Z"," UTC"),collector:data.host||"RIS collector unavailable",peerAsn:data.peer_asn||"?",prefixes:prefixText,path:Array.isArray(data.path)&&data.path.length?data.path.map(asn=>`AS${asn}`).join(" → "):""};
+      if(!this.live)return;
+      this.live.events.unshift(event);this.live.events.length=Math.min(this.live.events.length,250);
+      this.renderLiveEvents();
+    }
+    startLive() {
+      const asn=this.liveAsn();
+      if(!asn)return this.liveStatus("Enter a valid AS number from 1 through 4,294,967,295.",true);
+      this.stopLive(false);
+      const role=this.el("live-role").value;
+      const stream={events:[],socket:null,asn,role,stopped:false};this.live=stream;this.renderLiveEvents();
+      this.el("live-start").disabled=true;this.el("live-stop").hidden=false;
+      this.liveStatus(`Connecting to RIPE RIS for AS${asn}.`,false,true);
+      let socket;
+      try {socket=new WebSocket("wss://ris-live.ripe.net/v1/ws/?client=bgp-routing-exposure-lookup");}
+      catch {this.liveStatus("This browser could not open a RIS Live connection.",true);this.el("live-start").disabled=false;this.el("live-stop").hidden=true;return;}
+      stream.socket=socket;
+      socket.onopen=()=>{
+        if(this.live!==stream||stream.stopped)return;
+        socket.send(JSON.stringify({type:"ris_subscribe",data:{type:"UPDATE",path:role==="origin"?`${asn}$`:String(asn),socketOptions:{includeRaw:false}}}));
+        this.liveStatus(`Watching AS${asn} ${role==="origin"?"as an origin":"anywhere in observed paths"}.`);
+      };
+      socket.onmessage=event=>{try {if(this.live===stream&&!stream.stopped)this.liveEvent(JSON.parse(event.data));} catch {this.liveStatus("RIS Live sent an unreadable event.",true);}};
+      socket.onerror=()=>{if(this.live===stream&&!stream.stopped)this.liveStatus("RIS Live connection error. Check network or proxy access.",true);};
+      socket.onclose=()=>{
+        if(this.live!==stream)return;
+        stream.socket=null;this.el("live-start").disabled=false;this.el("live-stop").hidden=true;
+        if(!stream.stopped)this.liveStatus("RIS Live connection closed. Start again to reconnect.",true);
+      };
+    }
+    stopLive(clear=true) {
+      const stream=this.live;
+      if(!stream)return;
+      stream.stopped=true;
+      if(stream.socket&&stream.socket.readyState<2)stream.socket.close(1000,"Stopped by analyst");
+      stream.socket=null;this.el?.("live-start")&&(this.el("live-start").disabled=false);this.el?.("live-stop")&&(this.el("live-stop").hidden=true);
+      if(clear) {stream.events=[];this.renderLiveEvents();this.liveStatus("Live view stopped. Displayed events were cleared.");}
     }
     status(message, error=false, busy=false) { this.el("status").textContent=message; this.el("status").className=`status${error?" error":""}${busy?" busy":""}`; }
     showProgress(value) {
@@ -136,7 +222,7 @@
       element.textContent=`${needsReview?"Results need review. ":""}${completed} completed · ${failed} failed/invalid · ${pending} not requested · ${skipped} special-use skipped. ${warned} inputs with warnings · ${truncated} with truncated path evidence · ${partial} with partial coverage. `+
         (this.payload.incomplete?`Stopped: ${this.payload.incomplete} `:"")+
         (failed||pending?"Export completed results, then retry failed or unprocessed inputs. ":"")+
-        (truncated?"Displayed path evidence is limited; narrow the target to investigate further. ":"")+
+        (truncated?"Displayed path evidence is limited; counts include all accepted RIS routes, while the displayed list and CSV retain a bounded subset. Narrow the target to investigate further. ":"")+
         (warned?"Review per-input warnings for unavailable data or excluded observations. ":"");
     }
     async request(path, options={}) {
@@ -197,7 +283,7 @@
     }
     setBusy(busy) {
       if(!busy)this.el("cancel-job").hidden=true;
-      ["resolve","import","example","resources","date","paths-tab","origins-tab","capture","compare-dates","compare-before","compare-after","open-investigation","replay-investigation","bundle-export","comparison-export","snapshot-select"].forEach(id=>this.el(id).disabled=busy);
+      ["resolve","import","example","resources","date","paths-tab","origins-tab","live-tab","capture","compare-dates","compare-before","compare-after","open-investigation","replay-investigation","bundle-export","comparison-export","snapshot-select"].forEach(id=>this.el(id).disabled=busy);
       this.root.querySelectorAll('[name="mode"]').forEach(input=>input.disabled=busy);
     }
     async poll() {
@@ -300,6 +386,135 @@
       this.showSnapshot();
     }
     category(status) { return status==="mapped"?"mapped":["partial","ambiguous","multiple_networks"].includes(status)?"review":"unmapped"; }
+    visibilityContext(group) {
+      if (group.visibility) return group.visibility;
+      const collectorCount=group.collectors?.length||0;
+      const label=collectorCount<=1?"Limited public routing visibility":collectorCount<=3?"Multi-collector public routing visibility":"Broader public routing visibility";
+      return {label,collectorCount,peerCount:group.peerCount||0,prefixCount:group.prefixes?.length||0};
+    }
+    countryName(code) {
+      try { return new Intl.DisplayNames(["en"],{type:"region"}).of(code)||code; }
+      catch { return code; }
+    }
+    countryContext(asns, organizations, origin) {
+      const details=document.createElement("details");details.className="country-context";
+      const summary=document.createElement("summary");summary.textContent="Registered organization country context";details.append(summary);
+      const note=document.createElement("p");note.className="small muted";note.textContent="Country markers reflect CAIDA's registered organization-country field. The leftmost AS is part of a route advertisement observed by RIS; it is not a traffic source or a direct relationship with the origin.";details.append(note);
+      const list=document.createElement("ol");list.className="country-hop-list";details.append(list);
+      const hops=asns.map((asn,index)=>{
+        const info=organizations[String(asn)]||{};
+        const country=(info.country||"").toUpperCase();
+        const role=index===asns.length-1?"Origin":index===asns.length-2?"Adjacent to origin":index===0?"Leftmost AS in RIS-observed path":"Observed AS_PATH hop";
+        const hop={asn,country,role,organization:info.name||info.asName||"Organization unavailable",asName:info.asName||""};
+        const item=document.createElement("li");
+        const marker=document.createElement("span");marker.className="country-hop-marker";marker.textContent="–";item.append(marker);
+        const content=document.createElement("span");content.className="country-hop-content";
+        const heading=document.createElement("strong");heading.textContent=role;if(index===0)heading.title="The leftmost ASN in a route advertisement observed by a RIS collector. It is not a traffic source or a direct relationship with the origin.";content.append(heading);
+        const identity=document.createElement("span");identity.textContent=`AS${asn} · ${hop.organization}${hop.asName&&hop.asName!==hop.organization?` · ${hop.asName}`:""}`;content.append(identity);
+        const location=document.createElement("span");location.className="muted";location.textContent=country?`${this.countryName(country)} (${country})`:"Country unavailable";content.append(location);
+        item.append(content);list.append(item);hop.marker=marker;
+        return hop;
+      });
+      const stage=document.createElement("div");stage.className="country-map-stage";details.append(stage);
+      let rendered=false;
+      details.addEventListener("toggle",()=>{if(details.open&&!rendered){rendered=true;this.renderCountryMap(stage,hops);}});
+      return details;
+    }
+    async countryGeometry() {
+      if(!this.countryGeometryPromise) {
+        this.countryGeometryPromise=fetch(new URL("world-countries.json",assets),{cache:"force-cache"}).then(response=>{
+          if(!response.ok)throw new Error("Country map unavailable");
+          return response.json();
+        }).then(data=>{
+          if(data?.type!=="FeatureCollection"||!Array.isArray(data.features))throw new Error("Invalid country map");
+          return data;
+        }).catch(error=>{this.countryGeometryPromise=null;throw error;});
+      }
+      return this.countryGeometryPromise;
+    }
+    countryPath(geometry) {
+      const polygons=geometry?.type==="Polygon"?[geometry.coordinates]:geometry?.type==="MultiPolygon"?geometry.coordinates:[];
+      const project=([longitude,latitude])=>`${((Number(longitude)+180)*2).toFixed(1)},${(180-Number(latitude)*2).toFixed(1)}`;
+      return polygons.flatMap(polygon=>(polygon||[]).map(ring=>Array.isArray(ring)&&ring.length?`M${ring.map(project).join("L")}Z`:"")).join("");
+    }
+    pointInRing(point,ring) {
+      let inside=false;
+      for(let index=0,previous=ring.length-1;index<ring.length;previous=index++) {
+        const [x,y]=ring[index],[previousX,previousY]=ring[previous];
+        if((y>point[1])!==(previousY>point[1])&&point[0]<(previousX-x)*(point[1]-y)/(previousY-y)+x)inside=!inside;
+      }
+      return inside;
+    }
+    ringCentroid(ring) {
+      let area=0,x=0,y=0;
+      for(let index=0,previous=ring.length-1;index<ring.length;previous=index++) {
+        const [x1,y1]=ring[previous],[x2,y2]=ring[index],cross=x1*y2-x2*y1;
+        area+=cross;x+=(x1+x2)*cross;y+=(y1+y2)*cross;
+      }
+      return Math.abs(area)>0.00001?[x/(3*area),y/(3*area)]:null;
+    }
+    interiorPoint(polygon) {
+      const [outer,...holes]=polygon,inside=point=>this.pointInRing(point,outer)&&!holes.some(ring=>this.pointInRing(point,ring));
+      const centroid=this.ringCentroid(outer);
+      if(centroid&&inside(centroid))return centroid;
+      const longitudes=outer.map(point=>point[0]),latitudes=outer.map(point=>point[1]);
+      const minLongitude=Math.min(...longitudes),maxLongitude=Math.max(...longitudes),minLatitude=Math.min(...latitudes),maxLatitude=Math.max(...latitudes);
+      for(const divisions of [9,17,31]) {
+        const candidates=[];
+        for(let row=0;row<divisions;row++)for(let column=0;column<divisions;column++) {
+          const point=[minLongitude+(column+.5)*(maxLongitude-minLongitude)/divisions,minLatitude+(row+.5)*(maxLatitude-minLatitude)/divisions];
+          candidates.push(point);
+        }
+        candidates.sort((left,right)=>((left[0]-(centroid?.[0]??0))**2+(left[1]-(centroid?.[1]??0))**2)-((right[0]-(centroid?.[0]??0))**2+(right[1]-(centroid?.[1]??0))**2));
+        const point=candidates.find(inside);if(point)return point;
+      }
+      return null;
+    }
+    countryPoint(feature) {
+      const polygons=feature.geometry?.type==="Polygon"?[feature.geometry.coordinates]:feature.geometry?.type==="MultiPolygon"?feature.geometry.coordinates:[];
+      const area=ring=>Math.abs(ring.reduce((total,point,index)=>{const next=ring[(index+1)%ring.length];return total+point[0]*next[1]-next[0]*point[1];},0));
+      for(const polygon of [...polygons].filter(polygon=>polygon?.[0]?.length).sort((left,right)=>area(right[0])-area(left[0]))) {
+        const point=this.interiorPoint(polygon);
+        if(point)return {x:(point[0]+180)*2,y:180-point[1]*2};
+      }
+      return null;
+    }
+    async renderCountryMap(stage,hops) {
+      stage.replaceChildren();
+      const loading=document.createElement("p");loading.className="small muted";loading.textContent="Loading local country map…";stage.append(loading);
+      if(!hops.some(hop=>hop.country)) { loading.textContent="No registered organization country was available for this path.";return; }
+      try {
+        const data=await this.countryGeometry();
+        const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");svg.classList.add("country-map");svg.setAttribute("viewBox","0 0 720 360");svg.setAttribute("role","img");svg.setAttribute("aria-label","Registered organization country context for this observed AS path");
+        const title=document.createElementNS("http://www.w3.org/2000/svg","title");title.textContent="Registered organization country context";svg.append(title);
+        const points=new Map(),shapes=new Map();
+        for(const feature of data.features) {
+          const code=(feature.properties?.ISO_A2_EH||feature.properties?.ISO_A2||"").toUpperCase();
+          const path=this.countryPath(feature.geometry);if(!path)continue;
+          const shape=document.createElementNS("http://www.w3.org/2000/svg","path");shape.classList.add("country-shape");shape.setAttribute("d",path);svg.append(shape);
+          if(code&&code!=="-99") {
+            const point=this.countryPoint(feature);
+            if(point)points.set(code,point);
+            if(!shapes.has(code))shapes.set(code,[]);shapes.get(code).push(shape);
+          }
+        }
+        const offsets=[[0,0],[11,0],[-11,0],[0,11],[0,-11],[9,8],[-9,8],[9,-8],[-9,-8],[18,0],[-18,0],[0,18]];
+        const mapped=hops.filter(hop=>hop.country&&points.has(hop.country)).slice(0,12);
+        mapped.forEach((hop,index)=>{
+          const point=points.get(hop.country),offset=offsets[index]||[0,0],number=index+1;
+          shapes.get(hop.country)?.forEach(shape=>shape.classList.add("country-shape-active"));
+          const group=document.createElementNS("http://www.w3.org/2000/svg","g");group.classList.add("country-map-marker",hop.role==="Origin"?"country-map-origin":hop.role==="Adjacent to origin"?"country-map-adjacent":"country-map-hop");
+          const markerTitle=document.createElementNS("http://www.w3.org/2000/svg","title");markerTitle.textContent=`${number}. ${hop.role}: AS${hop.asn}, ${hop.organization}, ${hop.country}`;group.append(markerTitle);
+          const circle=document.createElementNS("http://www.w3.org/2000/svg","circle");circle.setAttribute("cx",String(point.x+offset[0]));circle.setAttribute("cy",String(point.y+offset[1]));circle.setAttribute("r","8");group.append(circle);
+          const text=document.createElementNS("http://www.w3.org/2000/svg","text");text.setAttribute("x",String(point.x+offset[0]));text.setAttribute("y",String(point.y+offset[1]+0.5));text.textContent=String(number);group.append(text);svg.append(group);
+          hop.marker.textContent=String(number);
+        });
+        stage.replaceChildren(svg);
+        const caption=document.createElement("p");caption.className="small muted";caption.textContent=`${mapped.length} of ${hops.filter(hop=>hop.country).length} AS_PATH hops with a registered country are shown. Markers are numbered in AS_PATH order.`;stage.append(caption);
+      } catch {
+        loading.textContent="The local country map could not be loaded. The organization-country list remains available above.";
+      }
+    }
     renderPaths() {
       this.showCompleteness();
       this.el("empty").hidden=true;this.el("path-results").hidden=false;
@@ -314,7 +529,9 @@
         for(const group of result.groups) {
           const org=result.asns[String(group.origin)]?.name||"Organization not found";
           section.append(node("h3",`AS${group.origin} · ${org}`));
-          section.append(node("p",`${group.neighbors.length} observed adjacent ASes · ${group.collectors.length} RIS collectors · ${group.peerCount} distinct collector peers`,"small muted"));
+          const visibility=this.visibilityContext(group);
+          const observedAt=result.observation?.observedAt?` · observed ${result.observation.observedAt.replace("T"," ").replace("+00:00"," UTC")}`:"";
+          section.append(node("p",`${visibility.label} · ${visibility.collectorCount} RIS collectors · ${visibility.peerCount} distinct collector peers · ${visibility.prefixCount} observed prefixes · ${group.neighbors.length} observed adjacent ASes${observedAt}`,"small muted"));
           const wrapper=node("div",undefined,"table-wrap paths-table");const table=node("table");wrapper.append(table);section.append(wrapper);
           const thead=node("thead"),heading=node("tr");["Observed adjacent AS","Relationship (inferred)","RIS peers","Collectors","Observed adjacency"].forEach(text=>heading.append(node("th",text)));thead.append(heading);table.append(thead);
           const tbody=node("tbody");table.append(tbody);
@@ -340,12 +557,12 @@
                   const country=info.country?`, ${info.country}`:"";
                   chain.append(node("span",`AS${asn} — ${label}${country}`,`as-hop${asn===group.origin?" origin-hop":""}`));
                 });
-                record.append(chain);list.append(record);
+                record.append(chain,this.countryContext(path.asns,result.asns,group.origin));list.append(record);
               }
               shown=end;more.hidden=shown>=neighbor.paths.length;
             };
             let opened=false;details.addEventListener("toggle",()=>{if(details.open&&!opened){opened=true;appendPaths();}});more.onclick=appendPaths;
-            if(neighbor.pathsTruncated)cell.append(node("p",`Evidence is limited to ${neighbor.paths.length} path/prefix combinations for this neighbor. Counts include all returned RIS routes.`,"warning"));
+            if(neighbor.pathsTruncated)cell.append(node("p",`Showing ${neighbor.paths.length} of ${neighbor.pathCount} observed path/prefix combinations.`,"warning"));
           }
           if(!group.neighbors.length){const row=node("tr"),cell=node("td","Only direct origin observations were available; no observed adjacent AS can be identified.");cell.colSpan=5;row.append(cell);tbody.append(row);}
         }
