@@ -72,6 +72,11 @@ Never collapse these categories. In particular, do not describe an AS immediatel
 
 - Follow pragmatic programming principles. Own the quality of the code you touch; leave it clearer, safer, and no more surprising than you found it.
 - Make small, reversible changes with a single purpose. Prefer simple, direct code over clever abstractions, and avoid duplicating business rules across the server, lookup logic, and browser UI.
+- Minimize complexity by keeping investigation features narrowly focused on routing evidence. Do not grow the application into a scanner, routing platform, or automated threat-scoring system.
+- Build deep modules with small, clear interfaces. For example, code that requests RIPE data should expose a paced lookup operation while keeping retries, rate limits, cancellation, and source-response quirks inside the request layer.
+- Hide source-specific details. Keep URLs, response formats, cache rules, and CAIDA or RIPE parsing out of the browser UI and analyst-facing result logic.
+- Keep abstraction layers distinct: the UI presents evidence and uncertainty; analysis code normalizes paths and derives summaries; source modules fetch and parse data. Do not mix HTTP or JSON details into analyst-facing decisions.
+- Define invalid states out of existence where practical. Use constrained inputs, explicit result states, allowlisted sources, and stable capture schemas instead of allowing ambiguous or malformed data to flow through the application.
 - State assumptions, invariants, units, time boundaries, and source semantics explicitly in code and tests. Use names that explain routing concepts without relying on comments to rescue ambiguous code.
 - Design module boundaries as contracts. Validate inputs at those boundaries, return predictable errors, and keep source-specific behavior behind focused helpers.
 - Detect problems early: validate at the point of entry, fail safely with useful messages, preserve enough context for diagnosis, and do not silently substitute guessed routing evidence.
