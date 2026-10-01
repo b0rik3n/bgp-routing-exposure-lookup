@@ -46,6 +46,7 @@
       this.el("snapshot-select").onchange=()=>this.showSnapshot();
       this.el("cancel-job").onclick=()=>this.cancelLookup();
       this.refreshRequests();this.requestTimer=setInterval(()=>this.refreshRequests(),5000);
+      this.refreshAccess();this.accessTimer=setInterval(()=>this.refreshAccess(),10000);
       this.el("paths-tab").onclick=()=>this.setView("paths");
       this.el("origins-tab").onclick=()=>this.setView("origins");
       ["paths-tab","origins-tab"].forEach(id=>this.el(id).onkeydown=(event)=>{
@@ -75,8 +76,24 @@
       this.setView("paths");
       this.el("resources").value="AS3333";
     }
-    disconnectedCallback() { clearInterval(this.requestTimer); clearTimeout(this.timer); this.controller?.abort(); }
+    disconnectedCallback() { clearInterval(this.requestTimer); clearInterval(this.accessTimer); clearTimeout(this.timer); this.controller?.abort(); }
     el(id) { return this.root.getElementById(id); }
+    async refreshAccess() {
+      try {
+        const response=await fetch(this.getAttribute("api-base")+"/access",{cache:"no-store"});
+        if(!response.ok)throw new Error();
+        const data=await response.json();
+        for(const source of data.sources||[]) {
+          const element=document.querySelector(`.access-indicator[data-source="${source.id}"]`);
+          if(!element)continue;
+          element.className=`access-indicator ${source.state}`;
+          const status=source.state==="available"?"available":source.state==="unavailable"?"unavailable":"checking";
+          element.title=`${source.label}: ${status}${source.detail?` (${source.detail})`:""}`;
+        }
+      } catch {
+        document.querySelectorAll(".access-indicator").forEach(element=>{element.className="access-indicator unavailable";element.title="Local server access check unavailable";});
+      }
+    }
     setView(view) {
       this.view=view;
       this.el("investigation-tools").hidden=view!=="paths";

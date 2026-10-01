@@ -64,6 +64,10 @@ and run the last two commands. These examples use a macOS/Linux-style shell.
 2. Leave **Observed BGP paths** selected and enter `AS3333`.
 3. Select **Latest**, then **Find observed paths**.
 4. Expand a path/prefix summary. AS names appear inline when available.
+
+The top-right indicators independently show whether the local server can reach
+RIPE paths, CAIDA organization names, and CAIDA relationship data. They make
+small source-access checks and do not submit a lookup target.
 5. Review warnings and source dates before exporting **CSV** or **JSON**.
 
 AS3333 is RIPE NCC’s network and is used as a public routing example. No

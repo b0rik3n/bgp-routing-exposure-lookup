@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from lookup import Datasets
-from server import Handler, JobStore, LookupHTTPServer
+from server import Handler, JobStore, LookupHTTPServer, SourceAccess
 
 
 class RetentionTests(unittest.TestCase):
@@ -159,3 +159,17 @@ class ConnectionTests(unittest.TestCase):
             self.assertEqual(json.loads(response.read())['status'],'ready')
         finally:
             conn.close()
+
+
+class SourceAccessTests(unittest.TestCase):
+    def test_status_reports_each_required_source(self):
+        access = SourceAccess()
+        self.addCleanup(access.shutdown)
+        def probe(url):
+            return ("as-organizations" not in url, None if "as-organizations" not in url else "URLError")
+        with patch.object(access, 'probe', side_effect=probe):
+            access.refresh()
+        sources = {entry['id']: entry for entry in access.status()['sources']}
+        self.assertEqual(sources['ripe']['state'], 'available')
+        self.assertEqual(sources['organizations']['state'], 'unavailable')
+        self.assertEqual(sources['relationships']['state'], 'available')

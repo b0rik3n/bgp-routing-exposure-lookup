@@ -13,9 +13,11 @@ import secrets
 import socket
 import threading
 import time
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
+from urllib.request import HTTPSHandler, Request, build_opener
 
-from lookup import Datasets, LookupError, MAX_TEXT, csv_export, parse_import, run_lookup
+from lookup import Datasets, LookupError, MAX_TEXT, csv_export, https_context, parse_import, run_lookup
 from investigations import MAX_BUNDLE, build as build_investigation, unpack as open_investigation
 from ripe_queue import RipeGate, PauseWork, CancelWork, acquire_owner
 from paths import MAX_PATH_INPUTS, PathLookup, parse_path_resource, path_csv_export
@@ -23,6 +25,64 @@ from paths import MAX_PATH_INPUTS, PathLookup, parse_path_resource, path_csv_exp
 ROOT = Path(__file__).parent
 ASSETS = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"),
           "/style.css": ("style.css", "text/css"), "/icons.svg": ("icons.svg", "image/svg+xml")}
+
+
+class SourceAccess:
+    """Bounded, cached reachability checks for the three external data sources."""
+
+    sources = (
+        ("ripe", "RIPE paths", "https://stat.ripe.net/data/bgp-state/data.json"),
+        ("organizations", "CAIDA names", "https://publicdata.caida.org/datasets/as-organizations/"),
+        ("relationships", "CAIDA relationships", "https://publicdata.caida.org/datasets/as-relationships/serial-2/"),
+    )
+
+    def __init__(self, lifetime=300):
+        self.lifetime = lifetime
+        self.lock = threading.Lock()
+        self.pool = ThreadPoolExecutor(max_workers=len(self.sources))
+        self.results = {}
+        self.checked_at = 0
+        self.refreshing = False
+
+    def probe(self, url):
+        request = Request(url, headers={"User-Agent": "BGPRoutingExposureLookup/0.2", "Range": "bytes=0-1"})
+        try:
+            with build_opener(HTTPSHandler(context=https_context())).open(request, timeout=8) as response:
+                response.read(2)
+                return True, None
+        except HTTPError as exc:
+            # RIPE's endpoint rejects a request without a resource with HTTP 400;
+            # that still proves DNS, TLS, and the endpoint are reachable.
+            return exc.code in (400, 404, 405, 429), f"HTTP {exc.code}"
+        except (URLError, TimeoutError, OSError) as exc:
+            return False, type(exc).__name__
+
+    def refresh(self):
+        try:
+            futures = {key: self.pool.submit(self.probe, url) for key, _, url in self.sources}
+            results = {}
+            for key, future in futures.items():
+                available, detail = future.result()
+                results[key] = {"state": "available" if available else "unavailable", "detail": detail}
+            with self.lock:
+                self.results = results
+                self.checked_at = time.time()
+        finally:
+            with self.lock:
+                self.refreshing = False
+
+    def status(self):
+        with self.lock:
+            if (not self.results or time.time() - self.checked_at >= self.lifetime) and not self.refreshing:
+                self.refreshing = True
+                threading.Thread(target=self.refresh, daemon=True).start()
+            return {"sources": [{"id": key, "label": label,
+                                  **self.results.get(key, {"state": "checking", "detail": None})}
+                                 for key, label, _ in self.sources],
+                    "checkedAt": datetime.fromtimestamp(self.checked_at, timezone.utc).isoformat() if self.checked_at else None}
+
+    def shutdown(self):
+        self.pool.shutdown(wait=False, cancel_futures=True)
 
 
 class JobStore:
@@ -163,7 +223,12 @@ class LookupHTTPServer(ThreadingHTTPServer):
 
     def __init__(self, *args, **kwargs):
         self.connections = threading.BoundedSemaphore(self.max_connections)
+        self.access = SourceAccess()
         super().__init__(*args, **kwargs)
+
+    def server_close(self):
+        self.access.shutdown()
+        super().server_close()
 
     def process_request(self, request, client_address):
         if not self.connections.acquire(blocking=False):
@@ -275,6 +340,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(self.server.jobs.paths.gate.status())
         if path == "/api/health":
             return self.reply({"status": "ready", "maxInputs": 1000})
+        if path == "/api/access":
+            return self.reply(self.server.access.status())
         parts = path.strip("/").split("/")
         if len(parts) in (3, 4) and parts[:2] == ["api", "jobs"]:
             job = self.server.jobs.read(parts[2], self.headers.get("X-Job-Token", ""))
