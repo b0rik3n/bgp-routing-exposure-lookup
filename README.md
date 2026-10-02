@@ -7,7 +7,7 @@ This tool helps us understand which networks sit between an organization and the
 wider internet. It uses publicly available routing information to show connections
 that have been observed and how they change over time.
 
-This is a proof-of-concept analyst tool developed with assistance from OpenAI Codex, including Terra and Astra. Its design and outputs are informed by publicly available BGP observations, routing research, and data from RIPE and CAIDA. It supports investigation and learning; it does not prove traffic flow, reachability, intent, or a vulnerability.
+This is a proof-of-concept analyst tool, AI-assisted in its development. Its design and outputs are informed by publicly available BGP observations, routing research, and data from RIPE and CAIDA. It supports investigation and learning; it does not prove traffic flow, reachability, intent, or a vulnerability.
 
 Think of it as studying a road map around a building: it helps identify possible
 approaches, but it doesn’t tell us which road a particular visitor took—or whether
