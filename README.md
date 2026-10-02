@@ -138,8 +138,15 @@ visibility in the collected data, not traffic share or confidence.
 
 Each expanded path also offers **Registered organization country context**. It
 maps the CAIDA country field for each AS hop and lists its role, ASN, and
-organization name. It is a compact reference for organization registration
-context, not a geographic traffic route, network presence, or collector location.
+organization name. For an origin's observed adjacent networks, the map groups
+markers by registered country; select a marker to inspect the included ASes.
+Double-click an empty area to zoom, and double-click again to return to the full
+map. The map is a compact reference for organization registration context, not a
+geographic traffic route, network presence, or collector location.
+
+The **Theme** menu changes the local display only and remembers the choice in
+that browser. It does not alter data, queries, exports, or investigation bundles.
+
 The leftmost AS is part of a route advertisement observed by RIS; it does not by
 itself identify a traffic source or direct relationship with the origin.
 

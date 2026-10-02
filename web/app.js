@@ -130,6 +130,7 @@
       this.el("resources").setAttribute("aria-label",paths?"ASNs, IP addresses, or CIDRs":"IP addresses, CIDRs, or start-end ranges");
       if (!paths && this.el("resources").value==="AS3333") this.el("resources").value="193.0.0.1";
       this.el("resolve").innerHTML=icon("search")+(paths?"Find observed paths":"Resolve networks");
+      this.el("resolve").classList.toggle("paths-action",paths);
       this.el("filename").textContent=paths?"CSV, TSV, or TXT · Up to 1,000 entries":"CSV, TSV, or TXT · Up to 1,000 entries";
       this.root.querySelector(".configuration .privacy").textContent=paths?"Public IP, prefix, or ASN queries are sent to RIPE NCC. No connections are made to imported IPs.":"Inputs stay on the lookup server. No connections are made to imported IPs.";
       this.root.querySelector('label[for="date"]').textContent=paths?"Observation date (12:00 UTC)":"Snapshot date (UTC)";
