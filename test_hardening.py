@@ -185,6 +185,14 @@ class ConnectionTests(unittest.TestCase):
 
 
 class SourceAccessTests(unittest.TestCase):
+    def test_organization_warmup_uses_only_the_caida_organization_directory(self):
+        access = SourceAccess()
+        self.addCleanup(access.shutdown)
+        with patch.object(access, "probe", return_value=(True, None)) as probe:
+            access.warm_organizations()
+        probe.assert_called_once_with("https://publicdata.caida.org/datasets/as-organizations/")
+        self.assertEqual(access.results["organizations"]["state"], "available")
+
     def test_status_reports_each_required_source(self):
         access = SourceAccess()
         self.addCleanup(access.shutdown)

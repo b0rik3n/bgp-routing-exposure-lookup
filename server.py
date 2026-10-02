@@ -82,6 +82,13 @@ class SourceAccess:
                                  for key, label, _ in self.sources],
                     "checkedAt": datetime.fromtimestamp(self.checked_at, timezone.utc).isoformat() if self.checked_at else None}
 
+    def warm_organizations(self):
+        """Make one best-effort CAIDA organization-directory request after startup."""
+        key, _, url = self.sources[1]
+        available, detail = self.probe(url)
+        with self.lock:
+            self.results[key] = {"state": "available" if available else "unavailable", "detail": detail}
+
     def shutdown(self):
         self.pool.shutdown(wait=False, cancel_futures=True)
 
@@ -225,9 +232,17 @@ class LookupHTTPServer(ThreadingHTTPServer):
     def __init__(self, *args, **kwargs):
         self.connections = threading.BoundedSemaphore(self.max_connections)
         self.access = SourceAccess()
+        self.warmup_timer = None
         super().__init__(*args, **kwargs)
 
+    def warm_organizations_after(self, delay=3):
+        self.warmup_timer = threading.Timer(delay, self.access.warm_organizations)
+        self.warmup_timer.daemon = True
+        self.warmup_timer.start()
+
     def server_close(self):
+        if self.warmup_timer:
+            self.warmup_timer.cancel()
         self.access.shutdown()
         super().server_close()
 
@@ -454,6 +469,7 @@ def main():
     except ValueError as exc:
         parser.error(str(exc))
     server.jobs = JobStore(Datasets(args.cache), gate)
+    server.warm_organizations_after(3)
     print(f"BGP Routing Exposure Lookup: http://{args.host}:{args.port}", flush=True)
     try:
         server.serve_forever()

@@ -6,9 +6,9 @@
     connectedCallback() {
       if (this.root) return;
       this.root = this.attachShadow({mode: "open"});
-      this.root.innerHTML = `<link rel="stylesheet" href="${new URL("style.css", assets)}">
-        <div class="view-tabs" role="tablist" aria-label="Lookup view"><button role="tab" id="paths-tab" aria-selected="true">Observed BGP paths</button><button role="tab" id="origins-tab" aria-selected="false">Origin mapping</button><button role="tab" id="live-tab" aria-selected="false">Live RIS View</button></div>
-        <form><section class="entry"><div><div class="entry-head"><label for="resources">IP addresses &amp; networks</label><div class="row"><button type="button" id="example" title="Load example addresses">Example</button><button type="button" id="import">${icon("upload")}Import file</button><input id="file" type="file" accept=".csv,.txt,.tsv,text/plain,text/csv" hidden></div></div>
+      this.root.innerHTML = `<link rel="stylesheet" href="${new URL("style.css?revision=map-controls-1", assets)}">
+        <div class="view-tab-bar"><div class="view-tabs" role="tablist" aria-label="Lookup view"><button role="tab" id="paths-tab" aria-selected="true">Observed BGP paths</button><button role="tab" id="origins-tab" aria-selected="false">Origin mapping</button><button role="tab" id="live-tab" aria-selected="false">Live RIS View</button></div><label class="theme-picker" for="theme"><span>Theme</span><select id="theme" title="Theme is saved only in this browser"><option value="soc">SOC Dark</option><option value="nord">Nord Calm</option><option value="contrast">High Contrast</option><option value="matrix">Matrix</option><option value="mucaro">Mucaro Dusk</option><option value="notebook">Field Notebook</option><option value="amber">Terminal Amber</option></select></label></div>
+        <form><section class="entry"><div><div class="entry-head"><label for="resources">IP addresses &amp; networks</label><div class="row"><button type="button" id="example" title="Load example addresses">Load example</button><button type="button" id="import">${icon("upload")}Import file</button><input id="file" type="file" accept=".csv,.txt,.tsv,text/plain,text/csv" hidden></div></div>
         <textarea id="resources" spellcheck="false" placeholder="193.0.0.1&#10;193.0.0.0/24" aria-label="IP addresses, CIDRs, or start-end ranges"></textarea><p class="privacy" id="filename">CSV, TSV, or TXT · Up to 1,000 entries</p></div>
         <div class="configuration"><fieldset><legend>Routing date</legend><div class="mode"><label><input name="mode" type="radio" value="latest" checked><span>Latest</span></label><label><input name="mode" type="radio" value="historical"><span>Historical</span></label></div><div class="date-wrap" hidden><label for="date">Snapshot date (UTC)</label><input id="date" type="date" min="2005-05-09"></div></fieldset><button class="primary" id="resolve" type="submit">${icon("search")}Resolve networks</button><p class="privacy">Inputs stay on the lookup server. No connections are made to imported IPs.</p></div></section></form>
         <details id="investigation-tools" class="investigation-tools"><summary>Save and compare investigations</summary>
@@ -26,10 +26,10 @@
         <button id="cancel-job" type="button" hidden>Cancel lookup</button>
         <div id="status" class="status" role="status" aria-live="polite">Ready</div>
         <section id="results" hidden><div class="summary"><div class="metric"><strong id="total">0</strong><span>Imported</span></div><div class="metric mapped"><strong id="mapped">0</strong><span>Mapped</span></div><div class="metric review"><strong id="review">0</strong><span>Review</span></div><div class="metric"><strong id="unmapped">0</strong><span>Unmapped</span></div></div>
-        <div class="result-head"><h2>Network attribution</h2><div class="toolbar"><input id="search" type="search" placeholder="Filter results" aria-label="Filter results"><select id="filter" aria-label="Result status"><option value="all">All results</option><option value="mapped">Mapped</option><option value="review">Needs review</option><option value="unmapped">Unmapped</option></select><button id="csv" class="icon" title="Export CSV" aria-label="Export CSV">${icon("download")}</button><button id="json" title="Export JSON">JSON</button></div></div>
+        <div class="result-head"><h2>Network attribution</h2><div class="toolbar"><input id="search" type="search" placeholder="Filter results" aria-label="Filter results"><select id="filter" aria-label="Result status"><option value="all">All results</option><option value="mapped">Mapped</option><option value="review">Needs review</option><option value="unmapped">Unmapped</option></select><button id="csv" class="icon" title="Export CSV" aria-label="Export CSV">${icon("download")}</button><button id="json" title="Export JSON">Export JSON</button></div></div>
         <div class="table-wrap"><table><thead><tr><th>Input / covered range</th><th>Matched BGP prefix</th><th>Origin ASN</th><th>Network organization</th><th>Status</th><th>Routing snapshot</th></tr></thead><tbody id="rows"></tbody></table></div><div id="sources" class="sources"></div><p id="row-count" class="small muted"></p></section>
         <div id="empty" class="empty">${icon("network")}<div>No lookup results</div></div>
-        <section id="path-results" hidden><div class="result-head"><h2>Observed paths to origin networks</h2><div class="toolbar"><button id="path-csv" title="Export observed BGP paths as CSV" aria-label="Export observed BGP paths as CSV">${icon("download")}CSV</button><button id="path-json" title="Export observed BGP paths as JSON" aria-label="Export observed BGP paths as JSON">JSON</button></div></div><p class="small muted">Observed routing advertisements—not measured traffic paths. Collector and peer counts describe visibility, not confidence or traffic share. Relationships are separately inferred; an adjacency does not confirm an entry point or vulnerability.</p><div id="path-content"></div></section>
+        <section id="path-results" hidden><div class="result-head"><h2>Observed paths to origin networks</h2><div class="toolbar"><button id="path-csv" title="Export observed BGP paths as CSV" aria-label="Export observed BGP paths as CSV">${icon("download")}CSV</button><button id="path-json" title="Export observed BGP paths as JSON">Export JSON</button></div></div><p class="small muted">Observed routing advertisements—not measured traffic paths. Collector and peer counts describe visibility, not confidence or traffic share. Relationships are separately inferred; an adjacency does not confirm an entry point or vulnerability.</p><div id="path-content"></div></section>
         <section id="live-view" class="live-view" hidden aria-label="Live RIS View"><div class="result-head"><div><h2>Live RIS View</h2><p class="small muted">A temporary stream of public BGP updates observed by RIPE RIS.</p></div><div class="toolbar"><button type="button" id="live-start" class="primary">Start live view</button><button type="button" id="live-stop" hidden>Stop</button></div></div><div class="live-configuration"><label for="live-asn">AS number<input id="live-asn" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="3333" value="3333" aria-describedby="live-privacy"></label><label for="live-role">Match updates where<select id="live-role"><option value="origin">This AS is the origin</option><option value="path">This AS appears anywhere in the path</option></select></label></div><p id="live-privacy" class="privacy">Starting opens a direct connection from this browser to RIPE RIS. RIPE can observe the selected AS filter and your public IP address. Events stay in browser memory and are cleared when you stop.</p><p id="live-status" class="status" role="status" aria-live="polite">Ready to start a live view.</p><p class="small muted">Live observations do not establish traffic flow, reachability, a security incident, or a policy violation.</p><div id="live-events" class="live-events" aria-live="polite"><p class="muted">No live events yet.</p></div></section>
         <footer class="footer">Data: <a href="https://stat.ripe.net/docs/data-api/api-endpoints/bgp-state" target="_blank" rel="noreferrer">RIPE RIS paths</a>, <a href="https://www.caida.org/catalog/datasets/as-relationships/" target="_blank" rel="noreferrer">CAIDA AS Relationships</a>, <a href="https://www.caida.org/catalog/datasets/routeviews-prefix2as/" target="_blank" rel="noreferrer">RouteViews prefix-to-AS</a>, and <a href="https://www.caida.org/catalog/datasets/as-organizations/" target="_blank" rel="noreferrer">AS Organizations</a>. Relationship classifications are inferences; collector peer counts are not traffic share.</footer>`;
       const today = new Date().toISOString().slice(0,10);
@@ -37,6 +37,8 @@
       this.el("date").value = today;
       ["compare-before", "compare-after"].forEach(id=>this.el(id).max=today);
       this.el("compare-after").value=today;
+      this.applyTheme(this.savedTheme());
+      this.el("theme").onchange=()=>this.applyTheme(this.el("theme").value);
       this.el("capture").onclick=()=>this.lookup("investigation");
       this.el("compare-dates").onclick=()=>this.lookup("comparison");
       this.el("open-investigation").onclick=()=>this.el("investigation-file").click();
@@ -82,6 +84,18 @@
       this.el("resources").value="AS3333";
     }
     disconnectedCallback() { clearInterval(this.requestTimer); clearInterval(this.accessTimer); clearTimeout(this.timer); this.controller?.abort(); this.stopLive(); }
+    savedTheme() {
+      try { return localStorage.getItem("bgp-routing-exposure-theme")||"soc"; }
+      catch { return "soc"; }
+    }
+    applyTheme(theme) {
+      const allowed=new Set(["soc","nord","contrast","matrix","mucaro","notebook","amber"]);
+      const selected=allowed.has(theme)?theme:"soc";
+      this.setAttribute("data-theme",selected);
+      document.documentElement.dataset.bgpTheme=selected;
+      this.el("theme").value=selected;
+      try { localStorage.setItem("bgp-routing-exposure-theme",selected); } catch {}
+    }
     el(id) { return this.root.getElementById(id); }
     async refreshAccess() {
       try {
@@ -396,16 +410,38 @@
       try { return new Intl.DisplayNames(["en"],{type:"region"}).of(code)||code; }
       catch { return code; }
     }
-    countryContext(asns, organizations, origin) {
+    groupCountryContext(group, organizations) {
+      const asns=[...group.neighbors.map(neighbor=>neighbor.asn),group.origin];
+      const pathRecordsByAs=new Map();
+      const originRecords=[];
+      for(const neighbor of group.neighbors) {
+        const records=neighbor.paths.map(path=>({...path,adjacent:neighbor.asn,origin:group.origin}));
+        pathRecordsByAs.set(neighbor.asn,records);
+        originRecords.push(...records);
+      }
+      pathRecordsByAs.set(group.origin,originRecords);
+      return this.countryContext(asns,organizations,group.origin,{
+        open:true,
+        group:true,
+        mapFirst:true,
+        pathRecordsByAs,
+        organizationNames:organizations,
+        roles:asns.map((asn,index)=>index===asns.length-1?"Origin AS":"Observed adjacent AS"),
+        note:"Country markers reflect CAIDA's registered organization-country field. They place each marker center inside the bundled country boundary; they do not depict a geographic route, network presence, or collector location."
+      });
+    }
+    countryContext(asns, organizations, origin, options={}) {
       const details=document.createElement("details");details.className="country-context";
-      const summary=document.createElement("summary");summary.textContent="Registered organization country context";details.append(summary);
-      const note=document.createElement("p");note.className="small muted";note.textContent="Country markers reflect CAIDA's registered organization-country field. The leftmost AS is part of a route advertisement observed by RIS; it is not a traffic source or a direct relationship with the origin.";details.append(note);
-      const list=document.createElement("ol");list.className="country-hop-list";details.append(list);
+      if(options.group)details.classList.add("group-country-context");
+      const summary=document.createElement("summary");summary.textContent="Registered organization country context";summary.hidden=Boolean(options.mapFirst);details.append(summary);
+      const note=document.createElement("p");note.className="small muted";note.textContent=options.note||"Country markers reflect CAIDA's registered organization-country field. The leftmost AS is part of a route advertisement observed by RIS; it is not a traffic source or a direct relationship with the origin.";
+      if(!options.mapFirst)details.append(note);
+      const list=document.createElement("ol");list.className="country-hop-list";
       const hops=asns.map((asn,index)=>{
         const info=organizations[String(asn)]||{};
         const country=(info.country||"").toUpperCase();
-        const role=index===asns.length-1?"Origin":index===asns.length-2?"Adjacent to origin":index===0?"Leftmost AS in RIS-observed path":"Observed AS_PATH hop";
-        const hop={asn,country,role,organization:info.name||info.asName||"Organization unavailable",asName:info.asName||""};
+        const role=options.roles?.[index]|| (index===asns.length-1?"Origin":index===asns.length-2?"Adjacent to origin":index===0?"Leftmost AS in RIS-observed path":"Observed AS_PATH hop");
+        const hop={asn,country,role,organization:info.name||info.asName||"Organization unavailable",asName:info.asName||"",pathRecords:options.pathRecordsByAs?.get(asn)||[],organizationNames:options.organizationNames||organizations,countryAggregate:Boolean(options.group)};
         const item=document.createElement("li");
         const marker=document.createElement("span");marker.className="country-hop-marker";marker.textContent="–";item.append(marker);
         const content=document.createElement("span");content.className="country-hop-content";
@@ -415,9 +451,17 @@
         item.append(content);list.append(item);hop.marker=marker;
         return hop;
       });
-      const stage=document.createElement("div");stage.className="country-map-stage";details.append(stage);
+      const stage=document.createElement("div");stage.className="country-map-stage";
+      if(options.mapFirst) {
+        const more=document.createElement("details");more.className="country-map-details";
+        const moreSummary=document.createElement("summary");moreSummary.textContent=`Show country context details (${asns.length} ASes)`;more.append(moreSummary,note,list);
+        details.append(stage,more);
+      } else {
+        details.append(list,stage);
+      }
       let rendered=false;
       details.addEventListener("toggle",()=>{if(details.open&&!rendered){rendered=true;this.renderCountryMap(stage,hops);}});
+      if(options.open){details.open=true;rendered=true;this.renderCountryMap(stage,hops);}
       return details;
     }
     async countryGeometry() {
@@ -471,13 +515,32 @@
       return null;
     }
     countryPoint(feature) {
+      return this.countryPoints(feature,1)[0]||null;
+    }
+    countryPoints(feature,count) {
       const polygons=feature.geometry?.type==="Polygon"?[feature.geometry.coordinates]:feature.geometry?.type==="MultiPolygon"?feature.geometry.coordinates:[];
       const area=ring=>Math.abs(ring.reduce((total,point,index)=>{const next=ring[(index+1)%ring.length];return total+point[0]*next[1]-next[0]*point[1];},0));
-      for(const polygon of [...polygons].filter(polygon=>polygon?.[0]?.length).sort((left,right)=>area(right[0])-area(left[0]))) {
-        const point=this.interiorPoint(polygon);
-        if(point)return {x:(point[0]+180)*2,y:180-point[1]*2};
+      const polygon=[...polygons].filter(polygon=>polygon?.[0]?.length).sort((left,right)=>area(right[0])-area(left[0]))[0];
+      if(!polygon)return [];
+      const [outer,...holes]=polygon,inside=point=>this.pointInRing(point,outer)&&!holes.some(ring=>this.pointInRing(point,ring));
+      const centroid=this.ringCentroid(outer),candidates=[];
+      if(centroid&&inside(centroid))candidates.push(centroid);
+      const longitudes=outer.map(point=>point[0]),latitudes=outer.map(point=>point[1]);
+      const minLongitude=Math.min(...longitudes),maxLongitude=Math.max(...longitudes),minLatitude=Math.min(...latitudes),maxLatitude=Math.max(...latitudes);
+      for(const divisions of [13,23,37]) for(let row=0;row<divisions;row++)for(let column=0;column<divisions;column++) {
+        const point=[minLongitude+(column+.5)*(maxLongitude-minLongitude)/divisions,minLatitude+(row+.5)*(maxLatitude-minLatitude)/divisions];
+        if(inside(point))candidates.push(point);
       }
-      return null;
+      const selected=[];
+      while(selected.length<count&&candidates.length) {
+        let bestIndex=0,bestScore=-1;
+        candidates.forEach((candidate,index)=>{
+          const score=selected.length?Math.min(...selected.map(point=>(candidate[0]-point[0])**2+(candidate[1]-point[1])**2)):-((candidate[0]-(centroid?.[0]??candidate[0]))**2+(candidate[1]-(centroid?.[1]??candidate[1]))**2);
+          if(score>bestScore){bestScore=score;bestIndex=index;}
+        });
+        selected.push(candidates.splice(bestIndex,1)[0]);
+      }
+      return selected.map(point=>({x:(point[0]+180)*2,y:180-point[1]*2}));
     }
     async renderCountryMap(stage,hops) {
       stage.replaceChildren();
@@ -485,35 +548,102 @@
       if(!hops.some(hop=>hop.country)) { loading.textContent="No registered organization country was available for this path.";return; }
       try {
         const data=await this.countryGeometry();
-        const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");svg.classList.add("country-map");svg.setAttribute("viewBox","0 0 720 360");svg.setAttribute("role","img");svg.setAttribute("aria-label","Registered organization country context for this observed AS path");
+        const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");svg.classList.add("country-map");svg.setAttribute("viewBox","0 0 720 360");svg.setAttribute("role","img");svg.setAttribute("aria-label","Registered organization country context. Double-click an empty map area to zoom.");
         const title=document.createElementNS("http://www.w3.org/2000/svg","title");title.textContent="Registered organization country context";svg.append(title);
-        const points=new Map(),shapes=new Map();
+        const viewport={x:0,y:0,width:720,height:360};let zoomLevel=0;
+        const updateViewport=()=>svg.setAttribute("viewBox",`${viewport.x.toFixed(2)} ${viewport.y.toFixed(2)} ${viewport.width.toFixed(2)} ${viewport.height.toFixed(2)}`);
+        const resetViewport=()=>{viewport.x=0;viewport.y=0;viewport.width=720;viewport.height=360;zoomLevel=0;updateViewport();};
+        const zoomAt=(x,y)=>{const nextWidth=viewport.width/2,nextHeight=viewport.height/2;viewport.x=Math.max(0,Math.min(720-nextWidth,x-(x-viewport.x)*nextWidth/viewport.width));viewport.y=Math.max(0,Math.min(360-nextHeight,y-(y-viewport.y)*nextHeight/viewport.height));viewport.width=nextWidth;viewport.height=nextHeight;zoomLevel++;updateViewport();};
+        svg.addEventListener("dblclick",event=>{if(event.target.closest?.(".country-map-marker"))return;const rect=svg.getBoundingClientRect();if(zoomLevel>=2)resetViewport();else zoomAt(viewport.x+(event.clientX-rect.left)*viewport.width/rect.width,viewport.y+(event.clientY-rect.top)*viewport.height/rect.height);event.preventDefault();});
+        const features=new Map(),shapes=new Map();
         for(const feature of data.features) {
           const code=(feature.properties?.ISO_A2_EH||feature.properties?.ISO_A2||"").toUpperCase();
           const path=this.countryPath(feature.geometry);if(!path)continue;
           const shape=document.createElementNS("http://www.w3.org/2000/svg","path");shape.classList.add("country-shape");shape.setAttribute("d",path);svg.append(shape);
           if(code&&code!=="-99") {
-            const point=this.countryPoint(feature);
-            if(point)points.set(code,point);
+            if(!features.has(code))features.set(code,[]);features.get(code).push(feature);
             if(!shapes.has(code))shapes.set(code,[]);shapes.get(code).push(shape);
           }
         }
-        const offsets=[[0,0],[11,0],[-11,0],[0,11],[0,-11],[9,8],[-9,8],[9,-8],[-9,-8],[18,0],[-18,0],[0,18]];
-        const mapped=hops.filter(hop=>hop.country&&points.has(hop.country)).slice(0,12);
-        mapped.forEach((hop,index)=>{
-          const point=points.get(hop.country),offset=offsets[index]||[0,0],number=index+1;
-          shapes.get(hop.country)?.forEach(shape=>shape.classList.add("country-shape-active"));
-          const group=document.createElementNS("http://www.w3.org/2000/svg","g");group.classList.add("country-map-marker",hop.role==="Origin"?"country-map-origin":hop.role==="Adjacent to origin"?"country-map-adjacent":"country-map-hop");
-          const markerTitle=document.createElementNS("http://www.w3.org/2000/svg","title");markerTitle.textContent=`${number}. ${hop.role}: AS${hop.asn}, ${hop.organization}, ${hop.country}`;group.append(markerTitle);
-          const circle=document.createElementNS("http://www.w3.org/2000/svg","circle");circle.setAttribute("cx",String(point.x+offset[0]));circle.setAttribute("cy",String(point.y+offset[1]));circle.setAttribute("r","8");group.append(circle);
-          const text=document.createElementNS("http://www.w3.org/2000/svg","text");text.setAttribute("x",String(point.x+offset[0]));text.setAttribute("y",String(point.y+offset[1]+0.5));text.textContent=String(number);group.append(text);svg.append(group);
-          hop.marker.textContent=String(number);
+        const eligible=hops.filter(hop=>hop.country&&features.has(hop.country));
+        const origins=eligible.filter(hop=>hop.role==="Origin AS"||hop.role==="Origin");
+        const adjacentHops=eligible.filter(hop=>hop.role!=="Origin AS"&&hop.role!=="Origin");
+        const aggregateByCountry=Boolean(adjacentHops[0]?.countryAggregate);
+        let mapEntries=[];
+        if(aggregateByCountry) {
+          const grouped=new Map();
+          adjacentHops.forEach(hop=>{if(!grouped.has(hop.country))grouped.set(hop.country,[]);grouped.get(hop.country).push(hop);});
+          mapEntries=[...grouped.entries()].sort((left,right)=>right[1].length-left[1].length||left[0].localeCompare(right[0])).map(([country,members])=>({country,role:"Observed adjacent ASes",members:members.sort((left,right)=>Number(left.asn)-Number(right.asn)),organizationNames:members[0].organizationNames}));
+          mapEntries.push(...origins);
+        } else {
+          mapEntries=[...adjacentHops.slice(0,Math.max(0,12-origins.length)),...origins].slice(0,12);
+        }
+        const byCountry=new Map();
+        mapEntries.forEach(entry=>{if(!byCountry.has(entry.country))byCountry.set(entry.country,[]);byCountry.get(entry.country).push(entry);});
+        const markers=[];
+        for(const [country,entries] of byCountry) {
+          const feature=[...features.get(country)].sort((left,right)=>JSON.stringify(right.geometry).length-JSON.stringify(left.geometry).length)[0];
+          this.countryPoints(feature,entries.length).forEach((point,index)=>markers.push({entry:entries[index],point}));
+        }
+        markers.forEach(({entry,point},index)=>{
+          const number=entry.members?String(entry.members.length):String(index+1);
+          shapes.get(entry.country)?.forEach(shape=>shape.classList.add("country-shape-active"));
+          const isOrigin=entry.role==="Origin"||entry.role==="Origin AS";
+          const group=document.createElementNS("http://www.w3.org/2000/svg","g");group.classList.add("country-map-marker",isOrigin?"country-map-origin":"country-map-adjacent");
+          const markerTitle=document.createElementNS("http://www.w3.org/2000/svg","title");markerTitle.textContent=entry.members?`${entry.members.length} observed adjacent ASes registered in ${this.countryName(entry.country)} (${entry.country})`:`${number}. ${entry.role}: AS${entry.asn}, ${entry.organization}, ${entry.country}`;group.append(markerTitle);
+          const circle=document.createElementNS("http://www.w3.org/2000/svg","circle");circle.setAttribute("cx",String(point.x));circle.setAttribute("cy",String(point.y));circle.setAttribute("r",String(entry.members?Math.max(7,4+number.length*2):7));circle.style.fill=isOrigin?"#ffe5a0":"#d5f7ec";group.append(circle);
+          const label=document.createElementNS("http://www.w3.org/2000/svg","text");label.setAttribute("x",String(point.x));label.setAttribute("y",String(point.y+.5));label.style.fill="#101718";label.style.fontSize=entry.members&&number.length>2?"8px":"10px";label.textContent=number;group.append(label);
+          group.setAttribute("role","button");group.setAttribute("tabindex","0");group.setAttribute("aria-label",entry.members?`Inspect ${entry.members.length} observed adjacent ASes in ${this.countryName(entry.country)}`:`Inspect ${entry.role}, AS${entry.asn}`);
+          const select=()=>this.showCountryPopup(svg,group,entry);
+          group.addEventListener("click",select);group.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();select();}});
+          svg.append(group);
+          if(!aggregateByCountry&&entry.marker)entry.marker.textContent=number;
         });
         stage.replaceChildren(svg);
-        const caption=document.createElement("p");caption.className="small muted";caption.textContent=`${mapped.length} of ${hops.filter(hop=>hop.country).length} AS_PATH hops with a registered country are shown. Markers are numbered in AS_PATH order.`;stage.append(caption);
+        const caption=document.createElement("p");caption.className="small muted";caption.textContent=aggregateByCountry?`${mapEntries.filter(entry=>entry.members).length} registered countries cover ${adjacentHops.length} observed adjacent ASes. The origin AS is shown separately when it has a registered country. Country counts do not depict a geographic route, network presence, or collector location. Double-click an empty map area to zoom; a third double-click resets the view.`:`${markers.length} of ${hops.filter(hop=>hop.country).length} ASes with a registered country are shown${eligible.length>mapEntries.length?" (first 12 to keep the map readable)":""}. Each marker center is generated inside its displayed country boundary. Double-click an empty map area to zoom; a third double-click resets the view.`;stage.append(caption);
       } catch {
         loading.textContent="The local country map could not be loaded. The organization-country list remains available above.";
       }
+    }
+    showCountryPopup(svg,marker,hop) {
+      const node=(tag,text,cls)=>{const element=document.createElement(tag);if(text!==undefined)element.textContent=text;if(cls)element.className=cls;return element;};
+      svg.querySelectorAll(".country-map-marker.selected").forEach(item=>item.classList.remove("selected"));
+      marker.classList.add("selected");
+      this.root.querySelector(".country-map-popup")?.close();
+      this.root.querySelector(".country-map-popup")?.remove();
+      const dialog=document.createElement("dialog");dialog.className="country-map-popup";
+      const header=document.createElement("div");header.className="country-map-popup-header";
+      const close=document.createElement("button");close.type="button";close.textContent="Close";close.addEventListener("click",()=>dialog.close());
+      if(hop.members) {
+        const title=document.createElement("div");title.append(node("strong",`${hop.members.length} observed adjacent ASes`),node("span",`${this.countryName(hop.country)} (${hop.country})`,"muted"));header.append(title,close);dialog.append(header);
+        const introduction=document.createElement("p");introduction.className="small muted";introduction.textContent="Each listed AS was observed immediately before the origin AS in at least one returned RIS route. This is registered organization-country context, not a geographic route or network presence.";dialog.append(introduction);
+        const members=document.createElement("ol");members.className="country-map-popup-as-list";
+        hop.members.forEach(member=>{const item=document.createElement("li");const name=member.organization||member.asName||"Organization unavailable";item.textContent=`AS${member.asn} · ${name}${member.asName&&member.asName!==name?` · ${member.asName}`:""}`;members.append(item);});
+        dialog.append(members);dialog.addEventListener("close",()=>{marker.classList.remove("selected");dialog.remove();});this.root.append(dialog);dialog.showModal();return;
+      }
+      const title=document.createElement("div");title.append(node("strong",`${hop.role}: AS${hop.asn}`),node("span",`${hop.organization}${hop.asName&&hop.asName!==hop.organization?` · ${hop.asName}`:""} · ${hop.country?`${this.countryName(hop.country)} (${hop.country})`:"Country unavailable"}`,"muted"));
+      header.append(title,close);dialog.append(header);
+      const introduction=document.createElement("p");introduction.className="small muted";introduction.textContent=hop.pathRecords.length?`Observed path evidence containing this ${hop.role.toLowerCase()}. The adjacent AS and origin are highlighted.`:"No returned path evidence is available for this AS.";dialog.append(introduction);
+      const records=document.createElement("div");records.className="country-map-popup-paths";
+      for(const path of hop.pathRecords) {
+        const record=document.createElement("div");record.className="path-record";
+        record.append(node("div",`${path.prefix} · ${path.peerCount} collector peers · ${path.collectors.join(", ")}`,"small muted"));
+        const chain=document.createElement("div");chain.className="as-path";
+        path.asns.forEach((asn,index)=>{
+          if(index)chain.append(node("span","→","muted"));
+          const info=hop.organizationNames[String(asn)]||{};
+          const names=[...new Set([info.asName,info.name].filter(Boolean))];
+          const label=names.length?names.join(" · "):"Name unavailable";
+          const country=info.country?`, ${info.country}`:"";
+          const classes=["as-hop"];
+          if(asn===path.adjacent)classes.push("map-path-adjacent");
+          if(asn===path.origin)classes.push("map-path-origin");
+          if(asn===hop.asn)classes.push("map-path-selected");
+          chain.append(node("span",`AS${asn} — ${label}${country}`,classes.join(" ")));
+        });
+        record.append(chain);records.append(record);
+      }
+      dialog.append(records);dialog.addEventListener("close",()=>{marker.classList.remove("selected");dialog.remove();});this.root.append(dialog);dialog.showModal();
     }
     renderPaths() {
       this.showCompleteness();
@@ -529,6 +659,7 @@
         for(const group of result.groups) {
           const org=result.asns[String(group.origin)]?.name||"Organization not found";
           section.append(node("h3",`AS${group.origin} · ${org}`));
+          section.append(this.groupCountryContext(group,result.asns));
           const visibility=this.visibilityContext(group);
           const observedAt=result.observation?.observedAt?` · observed ${result.observation.observedAt.replace("T"," ").replace("+00:00"," UTC")}`:"";
           section.append(node("p",`${visibility.label} · ${visibility.collectorCount} RIS collectors · ${visibility.peerCount} distinct collector peers · ${visibility.prefixCount} observed prefixes · ${group.neighbors.length} observed adjacent ASes${observedAt}`,"small muted"));
@@ -557,7 +688,7 @@
                   const country=info.country?`, ${info.country}`:"";
                   chain.append(node("span",`AS${asn} — ${label}${country}`,`as-hop${asn===group.origin?" origin-hop":""}`));
                 });
-                record.append(chain,this.countryContext(path.asns,result.asns,group.origin));list.append(record);
+                record.append(chain);list.append(record);
               }
               shown=end;more.hidden=shown>=neighbor.paths.length;
             };
