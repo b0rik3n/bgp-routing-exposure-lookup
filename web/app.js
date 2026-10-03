@@ -6,7 +6,7 @@
     connectedCallback() {
       if (this.root) return;
       this.root = this.attachShadow({mode: "open"});
-      this.root.innerHTML = `<link rel="stylesheet" href="${new URL("style.css?revision=map-controls-1", assets)}">
+      this.root.innerHTML = `<link rel="stylesheet" href="${new URL("style.css?revision=map-sheet-2", assets)}">
         <div class="view-tab-bar"><div class="view-tabs" role="tablist" aria-label="Lookup view"><button role="tab" id="paths-tab" aria-selected="true">Observed BGP paths</button><button role="tab" id="origins-tab" aria-selected="false">Origin mapping</button><button role="tab" id="live-tab" aria-selected="false">Live RIS View</button></div><label class="theme-picker" for="theme"><span>Theme</span><select id="theme" title="Theme is saved only in this browser"><option value="soc">SOC Dark</option><option value="nord">Nord Calm</option><option value="contrast">High Contrast</option><option value="matrix">Matrix</option><option value="mucaro">Mucaro Dusk</option><option value="notebook">Field Notebook</option><option value="amber">Terminal Amber</option></select></label></div>
         <form><section class="entry"><div><div class="entry-head"><label for="resources">IP addresses &amp; networks</label><div class="row"><button type="button" id="example" title="Load example addresses">Load example</button><button type="button" id="import">${icon("upload")}Import file</button><input id="file" type="file" accept=".csv,.txt,.tsv,text/plain,text/csv" hidden></div></div>
         <textarea id="resources" spellcheck="false" placeholder="193.0.0.1&#10;193.0.0.0/24" aria-label="IP addresses, CIDRs, or start-end ranges"></textarea><p class="privacy" id="filename">CSV, TSV, or TXT · Up to 1,000 entries</p></div>
@@ -554,9 +554,16 @@
         const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");svg.classList.add("country-map");svg.setAttribute("viewBox","0 0 720 360");svg.setAttribute("role","img");svg.setAttribute("aria-label","Registered organization country context. Double-click an empty map area to zoom.");
         const title=document.createElementNS("http://www.w3.org/2000/svg","title");title.textContent="Registered organization country context";svg.append(title);
         const viewport={x:0,y:0,width:720,height:360};let zoomLevel=0;
-        const updateViewport=()=>svg.setAttribute("viewBox",`${viewport.x.toFixed(2)} ${viewport.y.toFixed(2)} ${viewport.width.toFixed(2)} ${viewport.height.toFixed(2)}`);
+        const markerGroups=[];
+        const updateMarkerScale=()=>{const scale=1/(2**zoomLevel);markerGroups.forEach(({group,x,y})=>group.setAttribute("transform",`translate(${x} ${y}) scale(${scale}) translate(${-x} ${-y})`));};
+        const updateViewport=()=>{svg.setAttribute("viewBox",`${viewport.x.toFixed(2)} ${viewport.y.toFixed(2)} ${viewport.width.toFixed(2)} ${viewport.height.toFixed(2)}`);updateMarkerScale();};
         const resetViewport=()=>{viewport.x=0;viewport.y=0;viewport.width=720;viewport.height=360;zoomLevel=0;updateViewport();};
         const zoomAt=(x,y)=>{const nextWidth=viewport.width/2,nextHeight=viewport.height/2;viewport.x=Math.max(0,Math.min(720-nextWidth,x-(x-viewport.x)*nextWidth/viewport.width));viewport.y=Math.max(0,Math.min(360-nextHeight,y-(y-viewport.y)*nextHeight/viewport.height));viewport.width=nextWidth;viewport.height=nextHeight;zoomLevel++;updateViewport();};
+        let drag=null;
+        const stopDrag=event=>{if(!drag)return;if(event?.pointerId===drag.pointerId&&svg.hasPointerCapture(event.pointerId))svg.releasePointerCapture(event.pointerId);drag=null;svg.classList.remove("panning");};
+        svg.addEventListener("pointerdown",event=>{if(event.button!==0||event.target.closest?.(".country-map-marker"))return;const rect=svg.getBoundingClientRect();drag={pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,x:viewport.x,y:viewport.y,width:viewport.width,height:viewport.height,rect};svg.setPointerCapture(event.pointerId);svg.classList.add("panning");event.preventDefault();});
+        svg.addEventListener("pointermove",event=>{if(!drag||event.pointerId!==drag.pointerId)return;const dx=(event.clientX-drag.startX)*drag.width/drag.rect.width,dy=(event.clientY-drag.startY)*drag.height/drag.rect.height;viewport.x=Math.max(0,Math.min(720-viewport.width,drag.x-dx));viewport.y=Math.max(0,Math.min(360-viewport.height,drag.y-dy));updateViewport();});
+        svg.addEventListener("pointerup",stopDrag);svg.addEventListener("pointercancel",stopDrag);
         svg.addEventListener("dblclick",event=>{if(event.target.closest?.(".country-map-marker"))return;const rect=svg.getBoundingClientRect();if(zoomLevel>=2)resetViewport();else zoomAt(viewport.x+(event.clientX-rect.left)*viewport.width/rect.width,viewport.y+(event.clientY-rect.top)*viewport.height/rect.height);event.preventDefault();});
         const features=new Map(),shapes=new Map();
         for(const feature of data.features) {
@@ -599,10 +606,10 @@
           group.setAttribute("role","button");group.setAttribute("tabindex","0");group.setAttribute("aria-label",entry.members?`Inspect ${entry.members.length} observed adjacent ASes in ${this.countryName(entry.country)}`:`Inspect ${entry.role}, AS${entry.asn}`);
           const select=()=>this.showCountryPopup(svg,group,entry);
           group.addEventListener("click",select);group.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();select();}});
-          svg.append(group);
+          markerGroups.push({group,x:point.x,y:point.y});svg.append(group);
           if(!aggregateByCountry&&entry.marker)entry.marker.textContent=number;
         });
-        stage.replaceChildren(svg);
+        updateMarkerScale();stage.replaceChildren(svg);
         const caption=document.createElement("p");caption.className="small muted";caption.textContent=aggregateByCountry?`${mapEntries.filter(entry=>entry.members).length} registered countries cover ${adjacentHops.length} observed adjacent ASes. The origin AS is shown separately when it has a registered country. Country counts do not depict a geographic route, network presence, or collector location. Double-click an empty map area to zoom; a third double-click resets the view.`:`${markers.length} of ${hops.filter(hop=>hop.country).length} ASes with a registered country are shown${eligible.length>mapEntries.length?" (first 12 to keep the map readable)":""}. Each marker center is generated inside its displayed country boundary. Double-click an empty map area to zoom; a third double-click resets the view.`;stage.append(caption);
       } catch {
         loading.textContent="The local country map could not be loaded. The organization-country list remains available above.";
@@ -622,7 +629,7 @@
         const introduction=document.createElement("p");introduction.className="small muted";introduction.textContent="Each listed AS was observed immediately before the origin AS in at least one returned RIS route. This is registered organization-country context, not a geographic route or network presence.";dialog.append(introduction);
         const members=document.createElement("ol");members.className="country-map-popup-as-list";
         hop.members.forEach(member=>{const item=document.createElement("li");const name=member.organization||member.asName||"Organization unavailable";item.textContent=`AS${member.asn} · ${name}${member.asName&&member.asName!==name?` · ${member.asName}`:""}`;members.append(item);});
-        dialog.append(members);dialog.addEventListener("close",()=>{marker.classList.remove("selected");dialog.remove();});this.root.append(dialog);dialog.showModal();return;
+        dialog.append(members);dialog.addEventListener("close",()=>{marker.classList.remove("selected");dialog.remove();});this.root.append(dialog);dialog.show();return;
       }
       const title=document.createElement("div");title.append(node("strong",`${hop.role}: AS${hop.asn}`),node("span",`${hop.organization}${hop.asName&&hop.asName!==hop.organization?` · ${hop.asName}`:""} · ${hop.country?`${this.countryName(hop.country)} (${hop.country})`:"Country unavailable"}`,"muted"));
       header.append(title,close);dialog.append(header);
@@ -646,7 +653,7 @@
         });
         record.append(chain);records.append(record);
       }
-      dialog.append(records);dialog.addEventListener("close",()=>{marker.classList.remove("selected");dialog.remove();});this.root.append(dialog);dialog.showModal();
+      dialog.append(records);dialog.addEventListener("close",()=>{marker.classList.remove("selected");dialog.remove();});this.root.append(dialog);dialog.show();
     }
     rpkiPresentation(value) {
       const states={

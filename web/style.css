@@ -128,7 +128,8 @@ details button { margin:10px 13px; }
 .country-map-details > summary { padding:10px 13px; color:var(--detail); font-size:11px; }
 .country-map-details > .small { margin:0; padding:0 13px 10px; }
 .country-map-details .country-hop-list { margin:0; padding-bottom:13px; }
-.country-map { width:100%; max-width:none; height:auto; aspect-ratio:2/1; display:block; border:1px solid var(--map-item); border-radius:4px; background:var(--surface); }
+.country-map { width:100%; max-width:none; height:auto; aspect-ratio:2/1; display:block; border:1px solid var(--map-item); border-radius:4px; background:var(--surface); cursor:grab; touch-action:none; user-select:none; }
+.country-map.panning { cursor:grabbing; }
 .country-shape { fill:var(--map-land); stroke:var(--map-stroke); stroke-width:.7; vector-effect:non-scaling-stroke; }
 .country-shape-active { fill:var(--map-active); }
 .country-map-marker { cursor:pointer; outline:none; }
@@ -163,8 +164,7 @@ details button { margin:10px 13px; }
 
 @media (max-width:600px) { .coqui-background { width:100px; right:8px; bottom:10px; opacity:.025; } }
 @media print { .coqui-background { display:none; } }
-.country-map-popup { width:min(760px,calc(100vw - 32px); max-height:min(78vh,760px); margin:auto; padding:18px; overflow:auto; color:var(--text); background:var(--dialog); border:1px solid var(--border-strong); border-radius:16px; box-shadow:0 18px 50px #0008; }
-.country-map-popup::backdrop { background:#0009; }
+.country-map-popup { position:fixed; inset:clamp(76px,12vh,132px) max(16px,calc((100vw - 1440px)/2 + 16px)) auto auto; width:min(470px,calc(100vw - 32px)); max-height:min(62vh,620px); margin:0; padding:16px; overflow:auto; color:var(--text); background:var(--dialog); border:1px solid var(--border-strong); border-radius:16px; box-shadow:0 18px 50px #0008; }
 .country-map-popup-header { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
 .country-map-popup-header > div { display:grid; gap:2px; }
 .country-map-popup-header strong { color:var(--text-strong); font-size:16px; }
