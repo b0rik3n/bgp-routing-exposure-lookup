@@ -10,7 +10,7 @@ import ipaddress
 import json
 import re
 import time
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
@@ -194,6 +194,49 @@ class PathLookup:
         if requested != "latest":
             params["timestamp"] = requested + "T12:00:00"
         return "https://stat.ripe.net/data/bgp-state/data.json?" + urlencode(params)
+
+    @staticmethod
+    def rpki_url(origin, prefix):
+        return "https://stat.ripe.net/data/rpki-validation/data.json?" + urlencode({"resource": origin, "prefix": prefix})
+
+    def rpki(self, origin, prefix):
+        """Return current ROA authorization context for one public prefix-origin pair."""
+        if isinstance(origin, bool):
+            raise LookupError("Choose a valid origin ASN for RPKI validation.")
+        try:
+            origin = int(origin)
+        except (TypeError, ValueError):
+            raise LookupError("Choose a valid origin ASN for RPKI validation.") from None
+        if not 1 <= origin <= 4_294_967_295 or not isinstance(prefix, str):
+            raise LookupError("Choose a valid prefix and origin ASN for RPKI validation.")
+        try:
+            prefix = str(ipaddress.ip_network(prefix, strict=True))
+        except ValueError:
+            raise LookupError("Choose a valid CIDR prefix for RPKI validation.") from None
+        url = self.rpki_url(origin, prefix)
+        try:
+            request = Request(url, headers={"User-Agent": "BGPRoutingExposureLookup/0.2", "Accept": "application/json"})
+            def fetch():
+                with build_opener(NoRedirect(), HTTPSHandler(context=https_context())).open(request, timeout=20) as response:
+                    return response.read(1_000_001)
+            def validate(raw):
+                if len(raw) > 1_000_000:
+                    raise LookupError("RIPE RPKI validation response is too large.")
+                payload = json.loads(raw)
+                data = payload.get("data") if payload.get("status") == "ok" else None
+                status = data.get("status") if isinstance(data, dict) else None
+                if status not in {"valid", "invalid_asn", "invalid_length", "unknown"}:
+                    raise LookupError("RIPE could not provide RPKI validation for this prefix-origin pair.")
+                description = data.get("description")
+                return {"origin": origin, "prefix": prefix, "status": status,
+                        "description": description if isinstance(description, str) else "",
+                        "source": "RIPE RPKI Validation", "url": url}
+            raw = self.gate.fetch(url, "latest", fetch, validate) if self.gate else fetch()
+            return validate(raw)
+        except (HTTPError, URLError, TimeoutError, OSError, ValueError, AttributeError) as exc:
+            if isinstance(exc, LookupError):
+                raise
+            raise LookupError("RIPE RPKI validation could not be retrieved. Retry shortly.") from exc
 
     def ris(self, item, requested):
         url = self.ris_url(item, requested)

@@ -29,10 +29,11 @@ ASSETS = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascri
 
 
 class SourceAccess:
-    """Bounded, cached reachability checks for the three external data sources."""
+    """Bounded, cached reachability checks for the configured external data sources."""
 
     sources = (
         ("ripe", "RIPE paths", "https://stat.ripe.net/data/bgp-state/data.json"),
+        ("rpki", "RIPE RPKI", "https://stat.ripe.net/data/rpki-validation/data.json"),
         ("organizations", "CAIDA names", "https://publicdata.caida.org/datasets/as-organizations/"),
         ("relationships", "CAIDA relationships", "https://publicdata.caida.org/datasets/as-relationships/serial-2/"),
     )
@@ -84,7 +85,7 @@ class SourceAccess:
 
     def warm_organizations(self):
         """Make one best-effort CAIDA organization-directory request after startup."""
-        key, _, url = self.sources[1]
+        key, _, url = next(source for source in self.sources if source[0] == "organizations")
         available, detail = self.probe(url)
         with self.lock:
             self.results[key] = {"state": "available" if available else "unavailable", "detail": detail}
@@ -378,6 +379,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.allowed():
             return
+        if urlparse(self.path).path == "/api/rpki":
+            return self.rpki_validation()
         parts = self.path.strip('/').split('/')
         if len(parts)==4 and parts[:2]==['api','jobs'] and parts[3]=='cancel':
             if not self.server.jobs.cancel(parts[2], self.headers.get('X-Job-Token','')):
@@ -430,6 +433,25 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply({"error": str(exc)}, 429 if "busy" in str(exc) else 400)
         except (ValueError, TypeError, csv.Error, TimeoutError, RecursionError):
             return self.reply({"error": "Invalid import or date"}, 400)
+
+    def rpki_validation(self):
+        if self.headers.get("Content-Type", "").split(";", 1)[0] != "application/json":
+            return self.reply({"error": "JSON input required"}, 415)
+        try:
+            size = int(self.headers.get("Content-Length", "0"))
+            if not 0 < size <= 4096:
+                return self.reply({"error": "RPKI request exceeds the size limit"}, 413)
+            self.connection.settimeout(30)
+            body = json.loads(self.read_body(size, 30))
+            if not isinstance(body, dict) or set(body) != {"origin", "prefix"}:
+                raise LookupError("Provide one origin ASN and one CIDR prefix for RPKI validation.")
+            return self.reply(self.server.jobs.paths.rpki(body["origin"], body["prefix"]))
+        except PauseWork as exc:
+            return self.reply({"error": str(exc)}, 429)
+        except LookupError as exc:
+            return self.reply({"error": str(exc)}, 400)
+        except (ValueError, TypeError, TimeoutError, RecursionError):
+            return self.reply({"error": "Invalid RPKI validation request"}, 400)
 
     def import_investigation(self):
         if self.headers.get("Content-Type", "").split(";", 1)[0] != "application/zip":

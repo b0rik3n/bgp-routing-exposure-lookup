@@ -124,6 +124,26 @@ class PathTests(unittest.TestCase):
                     lookup.relationships("2026-08-28",{63})
             self.assertTrue(fetch.call_args.args[0].endswith("20260801.as-rel2.txt.bz2"))
 
+    def test_rpki_validation_uses_shared_gate(self):
+        class Gate:
+            def fetch(self, url, requested, fetch, validator):
+                self.url, self.requested = url, requested
+                raw=b'{"status":"ok","data":{"status":"valid","description":"Authorized"}}'
+                validator(raw)
+                return raw
+        with tempfile.TemporaryDirectory() as directory:
+            gate=Gate()
+            result=PathLookup(Datasets(Path(directory)),gate).rpki(63,"129.55.0.0/16")
+        self.assertEqual(gate.requested,"latest")
+        self.assertIn("rpki-validation",gate.url)
+        self.assertEqual(result["status"],"valid")
+        self.assertEqual(result["origin"],63)
+
+    def test_rpki_validation_rejects_invalid_pair(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lookup=PathLookup(Datasets(Path(directory)))
+            with self.assertRaises(LookupError): lookup.rpki("AS63","not-a-prefix")
+
 
 if __name__ == "__main__":
     unittest.main()

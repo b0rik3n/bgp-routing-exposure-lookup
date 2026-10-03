@@ -107,5 +107,15 @@ class InvestigationHTTPTests(unittest.TestCase):
             self.assertEqual(status,401)
         finally:self.server.service_token=''
 
+    def test_rpki_validation_is_explicit_and_bounded(self):
+        value={"origin":63,"prefix":"129.55.0.0/16","status":"valid"}
+        with patch.object(self.server.jobs.paths,"rpki",return_value=value) as rpki:
+            status,body=self.request("POST","/api/rpki",json.dumps({"origin":63,"prefix":"129.55.0.0/16"}),{"Content-Type":"application/json"})
+        self.assertEqual(status,200)
+        self.assertEqual(json.loads(body),value)
+        self.assertEqual(rpki.call_args.args,(63,"129.55.0.0/16"))
+        self.assertEqual(self.request("POST","/api/rpki",b"{}",{"Content-Type":"application/json"})[0],400)
+        self.assertEqual(self.request("POST","/api/rpki",b"{}",{"Content-Type":"text/plain"})[0],415)
+
 
 if __name__=='__main__':unittest.main()

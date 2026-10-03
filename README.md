@@ -69,7 +69,7 @@ and run the last two commands. These examples use a macOS/Linux-style shell.
 4. Expand a path/prefix summary. AS names appear inline when available.
 
 The top-right indicators independently show whether the local server can reach
-RIPE paths, CAIDA organization names, and CAIDA relationship data. They make
+RIPE paths, RIPE RPKI, CAIDA organization names, and CAIDA relationship data. They make
 small source-access checks and do not submit a lookup target.
 5. Review warnings and source dates before exporting **CSV** or **JSON**.
 
@@ -94,7 +94,9 @@ See [troubleshooting](docs/operations.md#troubleshooting) for other problems.
 | Import limit | 1,000 entries | 1,000 entries | One active AS subscription |
 
 Neither mode probes the destination. Historical availability and collector coverage
-vary. See [date semantics](docs/user-guide.md#current-and-historical-data).
+vary. For a displayed prefix–origin pair, **Check RPKI authorization** optionally
+asks RIPE whether the pairing matches a published ROA. It is current authorization
+context, not a verdict on a route, incident, or vulnerability. See [date semantics](docs/user-guide.md#current-and-historical-data).
 
 ## Live RIS View
 
@@ -217,8 +219,7 @@ lookups and captures. See [all import rules](docs/user-guide.md#import-formats).
 
 ## Privacy and operating limits
 
-**Local interface does not mean private queries.** Path lookups, captures, and
-comparisons send normalized targets and requested observation times to RIPE,
+**Local interface does not mean private queries.** Path lookups, captures, comparisons, and an optional RPKI check send normalized targets or the displayed prefix–origin pair to RIPE,
 which also sees your public source IP. Live RIS View sends its selected AS filter
 directly from the browser to RIPE RIS. CAIDA receives dataset download requests.
 Offline bundle replay makes no external queries. Exports are unencrypted and may
@@ -243,7 +244,7 @@ and [full limits](docs/operations.md#limits-caching-and-performance).
 
 Public collectors do not reveal every provider, private peer, or physical link.
 Names and inferred relationships may be incomplete or stale. The tool does not
-perform traceroute, RPKI validation, route-leak/hijack verdicts, vulnerability
+perform traceroute, route-leak/hijack verdicts, vulnerability
 scanning, or automatic mitigation. It is not yet validated against independent
 ground truth as a complete measurement of organizational routing dependencies.
 See [known limitations](docs/user-guide.md#known-limitations).
@@ -275,6 +276,7 @@ screenshots and logs before sharing them.
 | Source | Use |
 | --- | --- |
 | [RIPEstat BGP State / RIPE RIS](https://stat.ripe.net/docs/data-api/api-endpoints/bgp-state) | Current/historical observed AS paths. |
+| [RIPEstat RPKI Validation](https://stat.ripe.net/docs/data-api/api-endpoints/rpki-validation) | Optional current ROA authorization context for a displayed prefix–origin pair. |
 | [CAIDA RouteViews Prefix-to-AS](https://www.caida.org/catalog/datasets/routeviews-prefix2as/) | Daily prefix-to-origin mappings. |
 | [CAIDA AS Organizations](https://www.caida.org/catalog/datasets/as-organizations/) | Dated ASN and organization names. |
 | [CAIDA AS Relationships](https://www.caida.org/catalog/datasets/as-relationships/) | Dated serial-2 provider/customer and peer inferences. |

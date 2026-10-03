@@ -85,6 +85,7 @@ and cooldown timing. It uses the same Host/Origin/service-token checks.
 | `GET /` | Browser interface |
 | `GET /api/health` | Process readiness; does not test upstream data availability |
 | `POST /api/jobs` | Create a lookup job |
+| `POST /api/rpki` | Retrieve current ROA authorization context for one displayed `origin` and `prefix` pair |
 | `GET /api/jobs/{id}` | Read status and the completed result |
 | `GET /api/jobs/{id}/export` | Download CSV after completion or cancellation with partial results |
 | `POST /api/jobs/{id}/cancel` | Cancel future work; requires the job token |
@@ -100,6 +101,11 @@ curl --fail-with-body http://127.0.0.1:8765/api/jobs \
   -H 'Content-Type: application/json' \
   --data '{"text":"AS3333","date":"latest","mode":"paths"}'
 ```
+
+An optional RPKI request accepts only one observed prefix–origin pair, for example
+`{"origin":3333,"prefix":"193.0.0.0/21"}`. It returns RIPE's current `valid`,
+`invalid_asn`, `invalid_length`, or `unknown` authorization state; it does not
+establish traffic flow, intent, or an incident.
 
 HTTP `202` returns an `id` and `token`. Substitute those values below. The
 placeholders are not real credentials; keep the URL quoted when editing it:

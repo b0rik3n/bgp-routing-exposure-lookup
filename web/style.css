@@ -180,3 +180,9 @@ details button { margin:10px 13px; }
 .country-map-origin circle { fill:#ffe5a0; }
 .country-map-popup-as-list { margin:0; padding:0 0 0 22px; display:grid; gap:7px; }
 .country-map-popup-as-list li { color:var(--text); font:12px/1.4 ui-monospace,SFMono-Regular,monospace; overflow-wrap:anywhere; }
+
+.rpki-check { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:8px; }
+.rpki-check button { box-sizing:border-box; height:16px; min-height:16px; padding:0 5px; font-size:9px; line-height:14px; }
+.rpki-result { color:var(--muted); font-size:11px; line-height:1.4; }
+.rpki-result.valid { color:var(--secondary); }
+.rpki-result.invalid_asn, .rpki-result.invalid_length { color:var(--warning); }

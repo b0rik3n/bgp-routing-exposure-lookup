@@ -313,6 +313,7 @@
             this.status(job.state==="cancelled"?"Cancellation arrived after the investigation finished; the complete ZIP is available.":"Investigation captured. Export the ZIP to retain its evidence.");this.setBusy(false);return;
           }
           this.payload=job.result;
+          this.rpkiCache=new Map();
           if(this.payload.kind==="paths") this.renderPaths(); else this.render();
           this.status(job.state==="cancelled"?"Cancelled. Export any completed results before leaving.":this.payload.incomplete?`Partial results: ${this.payload.incomplete}`:"Processing finished. Review the result summary below.");
           this.setBusy(false);
@@ -353,6 +354,7 @@
     }
     showSnapshot() {
       this.payload=this.investigation.snapshots[Number(this.el("snapshot-select").value)||0];
+      this.rpkiCache=new Map();
       this.el("results").hidden=true;
       this.el("path-csv").hidden=true;
       this.renderPaths();
@@ -646,6 +648,37 @@
       }
       dialog.append(records);dialog.addEventListener("close",()=>{marker.classList.remove("selected");dialog.remove();});this.root.append(dialog);dialog.showModal();
     }
+    rpkiPresentation(value) {
+      const states={
+        valid:["RPKI: Valid","This prefix–origin pairing matches a published ROA."],
+        invalid_asn:["RPKI: Invalid ASN","A published ROA covers this prefix but names a different origin ASN."],
+        invalid_length:["RPKI: Invalid length","A published ROA covers this prefix, but this announcement exceeds its allowed maximum length."],
+        unknown:["RPKI: Unknown","No covering ROA was found for this prefix–origin pairing."]
+      };
+      return states[value.status]||["RPKI: Unavailable","RIPE did not provide a recognized authorization state."];
+    }
+    async checkRpki(prefix, origin, button, output) {
+      const key=`${origin}/${prefix}`;
+      button.disabled=true;
+      try {
+        let value=this.rpkiCache.get(key);
+        if(!value) {
+          button.textContent="Checking RPKI…";
+          const response=await fetch(`${this.getAttribute("api-base")}/rpki`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({origin,prefix}),cache:"no-store"});
+          const body=await response.json().catch(()=>({}));
+          if(!response.ok) throw new Error(body.error||"RPKI validation is unavailable. Retry shortly.");
+          value=body;this.rpkiCache.set(key,value);
+        }
+        const [label,meaning]=this.rpkiPresentation(value);
+        output.className=`rpki-result ${value.status}`;
+        output.textContent=`${label}. ${meaning}`;
+      } catch(error) {
+        output.className="rpki-result warning";
+        output.textContent=error.message;
+      } finally {
+        button.hidden=true;
+      }
+    }
     renderPaths() {
       this.showCompleteness();
       this.el("empty").hidden=true;this.el("path-results").hidden=false;
@@ -689,7 +722,11 @@
                   const country=info.country?`, ${info.country}`:"";
                   chain.append(node("span",`AS${asn} — ${label}${country}`,`as-hop${asn===group.origin?" origin-hop":""}`));
                 });
-                record.append(chain);list.append(record);
+                const rpki=node("div",undefined,"rpki-check");
+                const check=node("button","Check RPKI authorization");check.type="button";
+                const status=node("span","Optional ROA authorization context","rpki-result");status.setAttribute("aria-live","polite");
+                check.onclick=()=>this.checkRpki(path.prefix,group.origin,check,status);
+                rpki.append(check,status);record.append(chain,rpki);list.append(record);
               }
               shown=end;more.hidden=shown>=neighbor.paths.length;
             };
@@ -698,6 +735,7 @@
           }
           if(!group.neighbors.length){const row=node("tr"),cell=node("td","Only direct origin observations were available; no observed adjacent AS can be identified.");cell.colSpan=5;row.append(cell);tbody.append(row);}
         }
+        section.append(node("p","RPKI authorization is optional. Selecting a check sends this displayed prefix and origin ASN to RIPE through the shared request pace. Its result describes published ROA authorization only; it is not a route-security verdict.","small muted"));
         const sources=node("div",undefined,"sources");section.append(sources);
         const source=(entry,label)=>{if(!entry)return;const a=node("a",label);if(!/^https:\/\/(?:stat\.ripe\.net\/data\/bgp-state\/|publicdata\.caida\.org\/datasets\/)/.test(entry.url))return;a.href=entry.url;a.target="_blank";a.rel="noreferrer";sources.append(a);};
         source(result.observation,`RIS observation: ${result.observation?.observedAt.replace("T"," ")} UTC`);

@@ -12,7 +12,7 @@
 ## Respectful RIPE requests and cancellation
 
 All RIPE requests from the local server share one request gate across ordinary
-lookups, captures, comparisons, and browser tabs. It allows **one active request
+lookups, captures, comparisons, optional RPKI checks, and browser tabs. It allows **one active request
 at a time**, with a **two-second pause after a response**, including retries.
 There is **no daily request cap**. Observed paths, captures, comparisons, and Origin Mapping accept up to 1,000
 entries per submission. Large batches take longer: 1,000 uncached RIPE requests
@@ -136,6 +136,7 @@ These deadlines do not limit background jobs; the browser polls separately.
 | Observed BGP paths | Validated, normalized public IP/prefix/ASN queries are sent to RIPE NCC. |
 | Origin Mapping | Imported resources are matched locally; CAIDA receives dataset download requests, not resource queries. |
 | Enrichment | Public dataset download requests go to CAIDA. |
+| Optional RPKI check | The displayed public prefix and origin ASN are sent to RIPE NCC for current ROA authorization context. |
 | Imported destination | No ping, DNS enrichment, web fetch, or connection is made to the submitted destination. |
 
 Inputs fully within recognized special-use ranges are handled without external
@@ -157,7 +158,7 @@ normalized target ASN, IP address, or prefix, the requested observation time
 (for historical queries), and the public source IP of the connection. Capturing
 an investigation or comparing two dates uses this same lookup workflow. HTTPS
 encrypts the connection but does not hide the query from RIPE; a VPN changes the
-source IP visible to RIPE, not the target in the query.
+source IP visible to RIPE, not the target in the query. Selecting an optional RPKI check sends the displayed prefix and origin ASN to RIPE with the same visibility.
 
 To investigate without sending new target queries, open and replay an existing
 investigation ZIP in the local interface or use the offline replay command.
